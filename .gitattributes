@@ -1,0 +1,24 @@
+# 行尾与二进制策略。不写这个的话，Windows 上默认 autocrlf 会在下次 checkout /
+# stash pop 时静默改掉几十个文件的行尾，制造一坨看不出意图的 diff ——
+# 而这个项目已经被编码类问题咬过（README 记着 .ps1 丢 UTF-8 BOM 会被 PowerShell 5.1
+# 按 GBK 读、报一个位置毫不相关的「字符串缺少终止符」）。
+
+* text=auto
+
+# 源码统一按文本处理（仓库内存 LF）
+*.cs text
+*.xaml text
+*.md text
+*.json text
+*.html text
+*.ps1 text
+*.css text
+*.js text
+
+# 二进制：绝不允许改写内容。app.ico 是生成物又是 <ApplicationIcon> 的输入，
+# 一旦被当文本做行尾替换就直接损坏；效果图同理。
+*.png binary
+*.ico binary
+*.jpg binary
+*.cer binary
+*.pfx binary
