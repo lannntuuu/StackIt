@@ -1,0 +1,48 @@
+﻿# dotnet
+.dch/
+bin/
+obj/
+native/**/bin/
+native/**/obj/
+native/dist/
+
+*.log
+.acl-recovery/
+.dch/
+
+# 核验期间生成的截图
+native/_*.png
+native/**/startup-error.log
+
+# 图标生成器的附带产物。app.ico 本身要提交 —— exe 和窗口图标都靠它。
+native/StackIt.App/icon-*.png
+
+# 自签名代码签名证书公钥（由 new-cert.ps1 导出，分发给内部同事安装，不入库）
+native/StackIt-CodeSign.cer
+# dotnet CLI 的 HOME 重定向产物（某些构建会生成），不是项目内容
+.dotnet-home/
+
+# ── 个人记录数据：不入库 ──────────────────────────────────────────
+# 这些文件本身就是「谁在什么时候吃了什么」的完整记录，或它的等价形式，
+# 所以排除 记录.md 一个文件是不够的：
+#   verify/baseline-events.json 是 1697 条「品类|日期|时刻|份数|时段」，
+#     比 记录.md 更结构化、更好读；
+#   design/UI重设计-效果图*.html 内嵌 window.DATA（142 周 × 17 品类的逐周序列
+#     + 近 9 天逐条明细），三张 PNG 更是直接把记录画在图上。
+# ⚠ 代价：verify/native.ps1 需要 记录.md 与 verify/baseline-*.json 才能跑，
+#   所以新克隆无法直接回归；而且基准是已删除的网页版唯一的输出，**不可再生**，
+#   它们只存在于这台机器上 —— 请自行做异地备份。
+记录.md
+verify/baseline-events.json
+verify/baseline-history.json
+verify/baseline-stats.json
+verify/baseline-report.json
+design/UI重设计-效果图.html
+design/UI重设计-效果图-深色纸.html
+design/UI重设计-效果图-整张图纸.png
+design/UI重设计-效果图-界面放大.png
+design/UI重设计-效果图-深色纸.png
+
+# 重建历史期间的旧仓库备份。它的 objects 里装着已排除的数据 blob，
+# 绝不能被当普通目录提交进去。
+.git-old/

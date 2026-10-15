@@ -1,0 +1,394 @@
+<!--
+    交互层样式表。键名与 StackIt.App.UI.Interactions 里的常量一一对应。
+
+    为什么这张表必须是 XAML：Setter 的颜色全部要写 {DynamicResource} ——
+    ThemeRuntime 换配色时是往 Application.Resources 里**整组替换画刷对象**，
+    只有动态引用会跟着重新解析；代码里造的 Style 只能塞进某一个时刻取到的
+    画刷实例，切强调色时按钮就留在旧色上。DynamicResource 是标记扩展，
+    写不进 Setter，所以样式表只能放 XAML。
+
+    为什么全部是 keyed 样式（不做隐式 TargetType 样式）：
+    Views/ 下五个页面本批不动，隐式样式会顺着资源链命中所有 Button/Border，
+    等于一次改完整站。第 2、3 批逐页迁移时再显式套。
+
+    动画遵守两条限制（见 Interactions.cs 的类注释）：
+      · 只动 Transform 与 Opacity —— 不动 Width/Height/Margin/Padding，不触发布局；
+      · 底色（Background/BorderBrush/Foreground）用 Setter 阶跃，不做颜色动画。
+    时长 180ms（位移/缩放）、220ms（阴影/指示），缓动 CubicEase/CircleEase EaseOut
+    近似 cubic-bezier(.2,.8,.3,1)。
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:m="clr-namespace:StackIt.App"
+    xmlns:ui="clr-namespace:StackIt.App.UI">
+
+    <!-- ═══ 键盘 focus 环：2px Accent + 2px offset ═══
+         画在 AdornerLayer 上（Margin=2 就是那 2px offset），
+         所以不会撑大元素、也不会盖掉按钮自己那一圈描边。 -->
+    <Style x:Key="StackItFocusRing">
+        <Setter Property="Control.Template">
+            <Setter.Value>
+                <ControlTemplate>
+                    <Rectangle Margin="2"
+                               Stroke="{DynamicResource Accent}"
+                               StrokeThickness="2"
+                               RadiusX="4" RadiusY="4"
+                               SnapsToDevicePixels="True"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ═══ 模板：有位移/阴影的控件外壳 ═══
+         rise 底下备好了 [缩放, 位移] 两个变换，触发器里的动画才有东西可动；
+         shell 上的阴影常驻、平时全透明，hover 只动它的 Opacity。 -->
+    <ControlTemplate x:Key="ShellTemplate" TargetType="{x:Type ButtonBase}">
+        <Grid x:Name="rise" RenderTransformOrigin="0.5,0.5">
+            <Grid.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="xFx" ScaleX="1" ScaleY="1"/>
+                    <TranslateTransform x:Name="yFx" Y="0"/>
+                </TransformGroup>
+            </Grid.RenderTransform>
+            <Border x:Name="shell"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="{Binding Path=(ui:Interactions.Radius),
+                                   RelativeSource={RelativeSource TemplatedParent}}"
+                    Padding="{TemplateBinding Padding}"
+                    SnapsToDevicePixels="True">
+                <Border.Effect>
+                    <DropShadowEffect Color="{x:Static m:M.ShadowInk}"
+                                      ShadowDepth="3" BlurRadius="12" Direction="270"
+                                      Opacity="0" RenderingBias="Performance"/>
+                </Border.Effect>
+                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                  TextElement.Foreground="{TemplateBinding Foreground}"
+                                  RecognizesAccessKey="True"/>
+            </Border>
+        </Grid>
+
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Trigger.EnterActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="yFx"
+                                             Storyboard.TargetProperty="Y"
+                                             From="0" To="-1" Duration="0:0:0.18">
+                                <DoubleAnimation.EasingFunction>
+                                    <CubicEase EasingMode="EaseOut"/>
+                                </DoubleAnimation.EasingFunction>
+                            </DoubleAnimation>
+                            <DoubleAnimation Storyboard.TargetName="shell"
+                                             Storyboard.TargetProperty="(FrameworkElement.Effect).(DropShadowEffect.Opacity)"
+                                             From="0" To="1" Duration="0:0:0.18">
+                                <DoubleAnimation.EasingFunction>
+                                    <CircleEase EasingMode="EaseOut"/>
+                                </DoubleAnimation.EasingFunction>
+                            </DoubleAnimation>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </Trigger.EnterActions>
+                <Trigger.ExitActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="yFx"
+                                             Storyboard.TargetProperty="Y"
+                                             From="-1" To="0" Duration="0:0:0.18">
+                                <DoubleAnimation.EasingFunction>
+                                    <CubicEase EasingMode="EaseOut"/>
+                                </DoubleAnimation.EasingFunction>
+                            </DoubleAnimation>
+                            <DoubleAnimation Storyboard.TargetName="shell"
+                                             Storyboard.TargetProperty="(FrameworkElement.Effect).(DropShadowEffect.Opacity)"
+                                             From="1" To="0" Duration="0:0:0.18">
+                                <DoubleAnimation.EasingFunction>
+                                    <CircleEase EasingMode="EaseOut"/>
+                                </DoubleAnimation.EasingFunction>
+                            </DoubleAnimation>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </Trigger.ExitActions>
+            </Trigger>
+
+            <Trigger Property="IsPressed" Value="True">
+                <Trigger.EnterActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="xFx"
+                                                           Storyboard.TargetProperty="ScaleX">
+                                <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="0.985">
+                                    <EasingDoubleKeyFrame.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut"/>
+                                    </EasingDoubleKeyFrame.EasingFunction>
+                                </EasingDoubleKeyFrame>
+                            </DoubleAnimationUsingKeyFrames>
+                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="xFx"
+                                                           Storyboard.TargetProperty="ScaleY">
+                                <EasingDoubleKeyFrame KeyTime="0:0:0.12" Value="0.985">
+                                    <EasingDoubleKeyFrame.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut"/>
+                                    </EasingDoubleKeyFrame.EasingFunction>
+                                </EasingDoubleKeyFrame>
+                            </DoubleAnimationUsingKeyFrames>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </Trigger.EnterActions>
+                <Trigger.ExitActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="xFx"
+                                                           Storyboard.TargetProperty="ScaleX">
+                                <EasingDoubleKeyFrame KeyTime="0:0:0.14" Value="1">
+                                    <EasingDoubleKeyFrame.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut"/>
+                                    </EasingDoubleKeyFrame.EasingFunction>
+                                </EasingDoubleKeyFrame>
+                            </DoubleAnimationUsingKeyFrames>
+                            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="xFx"
+                                                           Storyboard.TargetProperty="ScaleY">
+                                <EasingDoubleKeyFrame KeyTime="0:0:0.14" Value="1">
+                                    <EasingDoubleKeyFrame.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut"/>
+                                    </EasingDoubleKeyFrame.EasingFunction>
+                                </EasingDoubleKeyFrame>
+                            </DoubleAnimationUsingKeyFrames>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </Trigger.ExitActions>
+            </Trigger>
+
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <!-- ═══ 模板：不动的外壳 ═══
+         文字按钮和页签用这个。设计稿里它们 hover 只改颜色（.btn.txt.hov
+         明确写 transform:none; box-shadow:none），抬起来反倒像按错了地方。 -->
+    <ControlTemplate x:Key="FlatButtonTemplate" TargetType="{x:Type ButtonBase}">
+        <Border x:Name="shell"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="{Binding Path=(ui:Interactions.Radius),
+                               RelativeSource={RelativeSource TemplatedParent}}"
+                Padding="{TemplateBinding Padding}"
+                SnapsToDevicePixels="True">
+            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                              TextElement.Foreground="{TemplateBinding Foreground}"
+                              RecognizesAccessKey="True"/>
+        </Border>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <!-- ═══ 按钮四档：主 / 次 / 文字 / 危险 ═══
+         分层靠**三件东西**：有没有底、有没有描边、字色是白还是墨。
+         之前全站六个导出按钮都是同一重描边按钮（台账 P2），
+         主次不分等于没有主次。 -->
+
+    <!-- 主：AccentDeep 实底 + OnAccent 字。一个界面里最多一个。 -->
+    <Style x:Key="StackItButton" TargetType="{x:Type ButtonBase}">
+        <Setter Property="Template" Value="{StaticResource ShellTemplate}"/>
+        <Setter Property="Background" Value="{DynamicResource AccentDeep}"/>
+        <Setter Property="Foreground" Value="{DynamicResource OnAccent}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource AccentDeep}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="ui:Interactions.Radius" Value="{x:Static m:M.RSm}"/>
+        <Setter Property="Padding" Value="14,8"/>
+        <Setter Property="FontFamily" Value="{x:Static m:M.Sans}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource StackItFocusRing}"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <!-- 实底按钮 hover 走同家族亮一档（AccentDeep → Accent），
+                     不是叠 Surface2 —— 白字底下的浅米色会把字吃掉 -->
+                <Setter Property="Background" Value="{DynamicResource Accent}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AccentDeep}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- 次：Surface 底 + Line 描边。数量可以很多，不抢主按钮。 -->
+    <Style x:Key="StackItButtonSecondary" TargetType="{x:Type ButtonBase}"
+           BasedOn="{StaticResource StackItButton}">
+        <Setter Property="Background" Value="{DynamicResource Surface}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="FontWeight" Value="Normal"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource Surface2}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                <Setter Property="Foreground" Value="{DynamicResource AccentDeep}"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource Surface}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- 文字：无底无描边，hover 出下划线。用来放"撤销 / 改时间 / 还没记过？" -->
+    <Style x:Key="StackItButtonText" TargetType="{x:Type ButtonBase}"
+           BasedOn="{StaticResource StackItButton}">
+        <Setter Property="Template" Value="{StaticResource FlatButtonTemplate}"/>
+        <Setter Property="Background" Value="{x:Null}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{DynamicResource Ink2}"/>
+        <Setter Property="FontWeight" Value="Normal"/>
+        <Setter Property="Padding" Value="4,8"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource AccentDeep}"/>
+                <!-- TextBlock.TextDecorations 是继承属性：设在控件上，
+                     ContentPresenter 里那个隐式 TextBlock 跟着变 -->
+                <Setter Property="TextBlock.TextDecorations">
+                    <Setter.Value>
+                        <TextDecorationCollection>
+                            <TextDecoration Location="Underline"
+                                            PenThicknessUnit="FontRecommended"/>
+                        </TextDecorationCollection>
+                    </Setter.Value>
+                </Setter>
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="False">
+                <Setter Property="TextBlock.TextDecorations" Value="{x:Null}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- 危险：Danger 描边 + Danger 字，绝不实底红。
+         删除这种不可逆操作要"看得出来危险"，但不能长得像主按钮。 -->
+    <Style x:Key="StackItButtonDanger" TargetType="{x:Type ButtonBase}"
+           BasedOn="{StaticResource StackItButtonSecondary}">
+        <Setter Property="Foreground" Value="{DynamicResource Danger}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Danger}"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource DangerSoft}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Danger}"/>
+                <Setter Property="Foreground" Value="{DynamicResource Danger}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- ═══ 芯片：筛选条那种小块，密度高、尺寸小 ═══ -->
+    <Style x:Key="StackItChip" TargetType="{x:Type ButtonBase}"
+           BasedOn="{StaticResource StackItButton}">
+        <Setter Property="Background" Value="{DynamicResource Surface}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Ink2}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="ui:Interactions.Radius" Value="{x:Static m:M.RXs}"/>
+        <Setter Property="Padding" Value="9,5"/>
+        <Setter Property="FontSize" Value="11.5"/>
+        <Setter Property="FontWeight" Value="Normal"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource Surface2}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                <Setter Property="Foreground" Value="{DynamicResource AccentDeep}"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource Surface}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- 芯片选中态：实底，和未选中差一整个层级（不是"稍微深一点的灰"） -->
+    <Style x:Key="StackItChipOn" TargetType="{x:Type ButtonBase}"
+           BasedOn="{StaticResource StackItChip}">
+        <Setter Property="Background" Value="{DynamicResource AccentDeep}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource AccentDeep}"/>
+        <Setter Property="Foreground" Value="{DynamicResource OnAccent}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource Accent}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                <Setter Property="Foreground" Value="{DynamicResource OnAccent}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- ═══ 卡片：承载数据的主结构才有资格是卡片 ═══
+         开 Hover.Shift 之后底色 Surface↔Surface2、抬 1px、阴影加深 ——
+         交互态由 Interactions.cs 驱动，颜色照样走资源键。 -->
+    <Style x:Key="StackItCard" TargetType="{x:Type Border}">
+        <Setter Property="Background" Value="{DynamicResource Surface}"/>
+        <Setter Property="CornerRadius" Value="{x:Static m:M.RMd}"/>
+        <Setter Property="Padding" Value="14,13"/>
+        <Setter Property="ui:Hover.Shift" Value="True"/>
+        <Setter Property="ui:Hover.BaseKey" Value="Surface"/>
+        <Setter Property="ui:Hover.HoverKey" Value="Surface2"/>
+        <Setter Property="Effect">
+            <Setter.Value>
+                <DropShadowEffect Color="{x:Static m:M.ShadowInk}"
+                                  ShadowDepth="1" BlurRadius="8" Direction="270"
+                                  Opacity="0.22" RenderingBias="Performance"/>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ═══ 底部「记一笔」主按钮：宋体 15.5、AccentDeep 实底、阴影常驻 ═══
+         这是全站唯一的主操作，字号和字族都跟正文拉开（衬线承载"动作"）。
+         圆角用 RMd(8)：它比行内控件大，比页面容器小。 -->
+    <Style x:Key="StackItCta" TargetType="{x:Type ButtonBase}"
+           BasedOn="{StaticResource StackItButton}">
+        <Setter Property="ui:Interactions.Radius" Value="{x:Static m:M.RMd}"/>
+        <Setter Property="Padding" Value="16,12"/>
+        <Setter Property="FontFamily" Value="{x:Static m:M.Serif}"/>
+        <Setter Property="FontSize" Value="15.5"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    </Style>
+
+    <!-- ═══ 底部页签：常态 Ink3；当前页 Ink + 加粗 + 指示条 ═══
+         「当前页」的文字状态走 ui:TabHost.IsCurrent 触发器，**不由代码写 Foreground**：
+         代码写上去的是本地值，优先级高于 IsMouseOver 触发器（当前页签 hover 就没反应了），
+         而且那个画刷实例从此不再跟着配色换。
+         指示条本体在 MainWindow 里（要按页签 key 找），用 Motion.ScaleX 做 scaleX 过渡。 -->
+    <Style x:Key="StackItTab" TargetType="{x:Type ButtonBase}">
+        <Setter Property="Template" Value="{StaticResource FlatButtonTemplate}"/>
+        <Setter Property="Background" Value="{x:Null}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="{DynamicResource Ink3}"/>
+        <Setter Property="FontFamily" Value="{x:Static m:M.Sans}"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontWeight" Value="Normal"/>
+        <Setter Property="Padding" Value="0,9,0,7"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FocusVisualStyle" Value="{StaticResource StackItFocusRing}"/>
+        <Style.Triggers>
+            <Trigger Property="ui:TabHost.IsCurrent" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+            </Trigger>
+            <!-- 写在 IsCurrent 之后：两者同时成立时 hover 胜出（设计上 hover 要看得见） -->
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource AccentDeep}"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+</ResourceDictionary>

@@ -1,0 +1,148 @@
+<!--
+    主窗口。底部条是**整个界面唯一一份**，声明在这里、不参与切页。
+
+    为什么专门写一句：设计台账里那条 P0（BuildFixedRecordBar 每次 ShowPage
+    往根 Grid 第 1 行再加一个 100px 的「记一笔」按钮、RowDefinitions 每页累加、
+    从不 Remove）说的就是"底部条被当成页面的一部分重建"。正确做法不是做单例
+    宿主，而是**根本别让它进入页面重建路径**：
+      · 底部条放在根 Grid 的第 1 行（Height=Auto），页面区在第 0 行（Height=*）；
+      · 切页只换 PageHost.Content，根 Grid 的行数、按钮实例自始至终不变；
+      · 页面内部滚不滚动、滚多远，都在第 0 行里，碰不到底部条 → 尺寸不可能被滚动改变。
+    所以这里既不需要 fixedBar 那层叠加，也不需要往 RowDefinitions 里加行。
+-->
+<Window x:Class="StackIt.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:m="clr-namespace:StackIt.App"
+        xmlns:ui="clr-namespace:StackIt.App.UI"
+        Title="StackIt · 服用记录"
+        Width="460" Height="900"
+        MinWidth="380" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource Paper}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 页面容器：三个页面共用这块区域，切换时只换 Content -->
+        <ContentControl x:Name="PageHost" Grid.Row="0" Margin="0"/>
+
+        <!-- ═══ 底部条：单一主操作 + 三个页签 ═══
+             阴影朝上（Direction=90）：这条压在页面区之上，光从下面来不合理。 -->
+        <Border x:Name="BottomBar" Grid.Row="1"
+                Background="{DynamicResource Surface}"
+                BorderBrush="{DynamicResource Line}"
+                BorderThickness="0,1,0,0">
+            <!-- 投影在代码里给（MainWindow.ApplyChrome）：DropShadowEffect.Color 要的是
+                 Color 而不是 Brush，换纸底时跟着资源键走不动，只能重刷一次。
+                 静止声明在这里会留下一个「XAML 说一套、代码换一套」的现场。 -->
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 主操作：全站只有这一个实底大按钮。
+                     「＋」用等宽族（衬体的＋在半角框里会偏高），键帽提示走 Mono 10。 -->
+                <Button x:Name="RecordButton" Grid.Row="0"
+                        Style="{DynamicResource StackItCta}"
+                        Click="OnRecordClick"
+                        Margin="14,12,14,8"
+                        ToolTip="记一笔（Ctrl+Enter）">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="＋"
+                                   FontFamily="{x:Static m:M.Mono}" FontSize="17"
+                                   Opacity="0.9" Margin="0,0,9,0"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1" Text="记一笔"
+                                   VerticalAlignment="Center"/>
+                        <Border Grid.Column="3"
+                                BorderBrush="{DynamicResource OnAccent}"
+                                BorderThickness="1"
+                                CornerRadius="{x:Static m:M.RXs}"
+                                Padding="5,2,5,2" Opacity="0.72"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="Ctrl+Enter"
+                                       FontFamily="{x:Static m:M.Mono}" FontSize="10"
+                                       Foreground="{DynamicResource OnAccent}"/>
+                        </Border>
+                    </Grid>
+                </Button>
+
+                <!-- 页签。当前页不只靠颜色：文字转 Ink + 加粗 + 下方 20×2 短横，
+                     短横用 scaleX 长出来（Motion.ScaleX），不换 Width 所以不重排。 -->
+                <Border Grid.Row="1"
+                        BorderBrush="{DynamicResource LineSoft}"
+                        BorderThickness="0,1,0,0">
+                    <UniformGrid Rows="1" Columns="3">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Button x:Name="TabStats" Grid.Row="0"
+                                    Style="{DynamicResource StackItTab}"
+                                    Click="OnTabClick" Tag="stats" Content="统计"/>
+                            <Border x:Name="TabStatsInd" Grid.Row="1"
+                                    Width="20" Height="2" CornerRadius="1"
+                                    HorizontalAlignment="Center"
+                                    Background="{DynamicResource Accent}">
+                                <Border.RenderTransform>
+                                    <ScaleTransform ScaleX="0"/>
+                                </Border.RenderTransform>
+                            </Border>
+                        </Grid>
+
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Button x:Name="TabTimeline" Grid.Row="0"
+                                    Style="{DynamicResource StackItTab}"
+                                    Click="OnTabClick" Tag="timeline" Content="时间流"/>
+                            <Border x:Name="TabTimelineInd" Grid.Row="1"
+                                    Width="20" Height="2" CornerRadius="1"
+                                    HorizontalAlignment="Center"
+                                    Background="{DynamicResource Accent}">
+                                <Border.RenderTransform>
+                                    <ScaleTransform ScaleX="0"/>
+                                </Border.RenderTransform>
+                            </Border>
+                        </Grid>
+
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Button x:Name="TabData" Grid.Row="0"
+                                    Style="{DynamicResource StackItTab}"
+                                    Click="OnTabClick" Tag="data" Content="数据"/>
+                            <Border x:Name="TabDataInd" Grid.Row="1"
+                                    Width="20" Height="2" CornerRadius="1"
+                                    HorizontalAlignment="Center"
+                                    Background="{DynamicResource Accent}">
+                                <Border.RenderTransform>
+                                    <ScaleTransform ScaleX="0"/>
+                                </Border.RenderTransform>
+                            </Border>
+                        </Grid>
+                    </UniformGrid>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

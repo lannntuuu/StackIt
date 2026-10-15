@@ -1,0 +1,11 @@
+<!-- 注意：不要设 StartupUri。
+     App.OnStartup 里已经自己 new MainWindow() 并 Show()（为了在窗口创建前
+     应用主题、并支持 shot 离屏渲染）。留着 StartupUri 会多开一个窗口，
+     而且它加载时主题还没应用，首帧会闪成默认色。 -->
+<Application x:Class="StackIt.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+
+    </Application.Resources>
+</Application>

@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- 托盘图标要用 NotifyIcon，所以引 WinForms 程序集。
+         但绝不能让它的隐式 using 生效：System.Drawing.Color 会和
+         System.Windows.Media.Color 撞名，System.Windows.Forms.Application 会和
+         System.Windows.Application 撞名，全项目一片 CS0104。
+         所以下面两条 Using 只加/去掉这一个，别的隐式 using 保持原样。 -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- 原生控件在非客户区默认是系统浅色；强制走我们的配色 -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+
+    <!--
+      图标。图形定义在 IconGen.cs，用 make-icon 命令重新生成（7 个尺寸的 ICO）。
+      必须先存在才能 build：没法在构建期生成，因为生成器本身就是这个 exe。
+      所以 app.ico 留在项目里，当成生成物更新：改了形状跑一次
+      StackIt.App.exe make-icon app.ico 覆盖它。
+      想从头来：先临时把这行注释掉 build 一次，生成图标，再取消注释。
+    -->
+    <ApplicationIcon Condition="Exists('app.ico')">app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StackIt.Core\StackIt.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 窗口图标要的是 WPF 资源（XAML / pack URI 按资源找，不是按文件）。
+         写 None 的话图标只在 exe 里嵌了一份，pack URI 照样找不到资源，
+         运行时会抛 XamlParseException: 找不到资源，启动就崩。
+         CopyToOutputDirectory 是为了让自检能按路径直接读同一份文件。 -->
+    <Resource Include="app.ico" Condition="Exists('app.ico')" />
+    <Content Include="app.ico" Condition="Exists('app.ico')"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- 只去掉 WinForms 和 Drawing 这两条隐式 using，别的不动。
+       去掉之后用到的地方写全名（System.Windows.Forms.NotifyIcon 等）。 -->
+  <ItemGroup>
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
+  </ItemGroup>
+
+</Project>
