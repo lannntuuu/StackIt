@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    版本号唯一来源。StackIt.App 与 StackIt.Core 都从这里继承，
+    不要在各自的 csproj 里再写一遍 —— 两处版本迟早会漂。
+
+    规则（语义化版本，但按「个人自用工具」的口径解释，不追严格 API 兼容）：
+      MAJOR  数据结构或产品规则变了。例：db.json 字段语义变化、
+             「两种空白」的区分方式变化、时段档位增减。
+             主版本升级可能要迁移本机数据，升级前先看这里。
+      MINOR  界面或功能有可感知的新增。例：本次的 UI 重设计 v2、新增一种纸底。
+      PATCH  修 bug、调取值，不新增能力。例：对比度不达标、滚动失效。
+
+    当前数据格式版本是 db.json 里的 "version":1，和上面的应用版本号
+    是两件事 —— 应用升到 2.0.0 不代表数据格式变了。
+  -->
+  <PropertyGroup>
+    <Version>2.0.0</Version>
+    <Product>StackIt</Product>
+    <AssemblyTitle>StackIt · 服用记录</AssemblyTitle>
+    <Company>StackIt</Company>
+    <!-- 构建溯源：SDK 默认会把 git 提交号追加到 InformationalVersion，
+         于是 exe 的「详细信息」里能看出这次是从哪个提交编出来的。
+         想关掉就设 <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion> -->
+  </PropertyGroup>
+
+</Project>
