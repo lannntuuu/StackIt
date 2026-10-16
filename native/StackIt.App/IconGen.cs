@@ -17,23 +17,21 @@ namespace StackIt.App;
 internal static class IconGen
 {
     /// <summary>
-    /// 图标 = 一叠高低不一的柱子。
+    /// 图标 = 一颗斜置胶囊：米白帽 + 琥珀身，靛蓝底。
     ///
-    /// 上一版是"一条横杠"，用户反馈很丑 —— 问题不在配色，在于形状：
-    /// 一个圆角矩形里放一条圆角矩形，就是一个没有信息的胶囊，
-    /// 缩到 16px 也没剩下任何可认的东西。
+    /// 版本史：一版「一条横杠」信息量为零；二版「四根柱子」被否——
+    /// 形状太通用（像任何统计软件）、配色跟界面、不贴合「服用记录」主题。
+    /// 三版候选画了五个母题（格 / 印 / 叠 / 板 / 囊），用户选了胶囊：
+    /// 最直白、一眼药事、轮廓在任务栏里最干净。
     ///
-    /// 现在改成 4 根高低不同的柱子：既认得出"记录密度 / 频次"，
-    /// 又是任何缩放尺寸下都成立的经典形状。
-    ///
-    /// 配色踩过一个坑：底色用 AccentDeep，渲染出来用户反馈"全黑"。
-    /// AccentDeep 是色阶里的深棕档（琥珀色下就是 RGB 79,52,34），
-    /// 它的设计用途是"深底承载文字"，当图标底色就成了看不出图案的黑饼。
-    /// 改用 Accent —— 该色阶的正常饱和档，浅色柱子的对比也更好。
+    /// 配色**锁死字面值**，不再取运行时 Theme.Accent：ICO 是静态文件，
+    /// 「跟着主题走」从来只在生成那一刻成立；而且应用是 2 纸底 × 6 强调色，
+    /// 图标跟不了任何一套，不如定一套。靛蓝取自「靛」色相家族压深一档
+    /// （冷静专业），米白/琥珀就是界面的纸色与默认强调色——图标和界面同族。
     ///
     /// 小尺寸要**单独一套形状**，不能只是把大图缩小：
-    /// 圆角在 16px 上只剩锯齿，柱子之间那道缝直接糊掉。
-    /// 所以 size 小于阈值时走 flat：直角、柱子更宽更少、留白更小。
+    /// 斜置胶囊在 16px 上抗锯齿糊成一团，≤32 走 upright——直角底、
+    /// 胶囊竖直、帽身缝隙加宽，保证托盘里仍是清楚的「两段一粒」。
     /// </summary>
     private static DrawingVisual Draw(int size = 256)
     {
@@ -41,41 +39,34 @@ internal static class IconGen
         using var dc = v.RenderOpen();
 
         const double S = 256;
-        // Accent 而不是 AccentDeep —— 后者是近黑的深棕，图标会变成黑饼。
-        var bg = (Brush)Application.Current.Resources[Theme.Accent];
-        var bar = Brushes.White;
+        var bg = new SolidColorBrush(Color.FromRgb(0x3E, 0x51, 0x90));   // 靛蓝底
+        var cap = new SolidColorBrush(Color.FromRgb(0xF6, 0xEF, 0xE1));  // 米白帽
+        var body = new SolidColorBrush(Color.FromRgb(0xD7, 0x9A, 0x3E)); // 琥珀身
 
         var small = size <= 32;
 
-        // 小尺寸：直角、收紧留白、柱子更宽
-        var inset = small ? 4.0 : 10.0;
-        var radius = small ? 0.0 : 56.0;
+        // 底板：小尺寸直角满幅（圆角在 16px 上只剩锯齿），大图按 Win 惯例留白圆角
+        var inset = small ? 1.0 : 10.0;
+        dc.DrawGeometry(bg, null, Round(inset, inset, S - 2 * inset, S - 2 * inset, small ? 0 : 56));
 
-        var padX = small ? 26.0 : 44.0;
-        var padTop = small ? 32.0 : 42.0;
-        var padBottom = small ? 32.0 : 44.0;
-        var gap = small ? 8.0 : 14.0;
+        dc.PushTransform(new RotateTransform(small ? 0 : -32, 128, 128));
+        var w = small ? 96.0 : 84.0;
+        var x = 128 - w / 2;
+        var top = small ? 34.0 : 30.0;
+        var bottom = S - top;
+        var gap = small ? 8.0 : 6.0;
+        var mid = 128.0;
+        var stadium = Round(x, top, w, bottom - top, w / 2);
 
-        // 小尺寸下 4 根柱子太挤，2 根会糊 —— 保持 4 根但把宽度给足
-        double[] heights = small
-            ? new[] { 0.45, 0.95, 0.65, 1.0 }
-            : new[] { 0.40, 0.72, 0.55, 0.90 };
-
-        dc.DrawGeometry(bg, null, Round(inset, inset, S - 2 * inset, S - 2 * inset, radius));
-
-        var areaW = S - 2 * padX;
-        var barW = (areaW - gap * (heights.Length - 1)) / heights.Length;
-        var maxH = S - padTop - padBottom;
-
-        for (var i = 0; i < heights.Length; i++)
-        {
-            var h = maxH * heights[i];
-            var x = padX + i * (barW + gap);
-            var y = S - padBottom - h;
-            // 小尺寸柱子用直角，避免圆角吃掉本就很少的像素
-            var r = small ? 0.0 : barW * 0.42;
-            dc.DrawGeometry(bar, null, Round(x, y, barW, h, r));
-        }
+        // 上半（帽）米白、下半（身）琥珀：同一颗体育场形各裁一半画两遍，
+        // 中间留 gap 的缝——两段式是胶囊能被认出来的关键。
+        dc.PushClip(new RectangleGeometry(new Rect(0, 0, S, mid - gap / 2)));
+        dc.DrawGeometry(cap, null, stadium);
+        dc.Pop();
+        dc.PushClip(new RectangleGeometry(new Rect(0, mid + gap / 2, S, S)));
+        dc.DrawGeometry(body, null, stadium);
+        dc.Pop();
+        dc.Pop();
 
         return v;
     }
