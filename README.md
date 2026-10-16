@@ -186,7 +186,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File verify/native.ps1
 > 基准文件本身是个人数据（aseline-events.json 就是 1697 条逐条记录），
 > 所以 记录.md 与 erify/baseline-*.json 都在 .gitignore 里、只存在于本机。
 > 两个后果：① 新克隆的仓库跑不了这个回归，需要自己放一份 记录.md；
-> ② 基准是已删除的网页版**唯一**的输出，不可再生 —— 请单独做异地备份。
+> ② 基准是已删除的网页版**唯一**的输出，不可再生。两者都只有本机这一份——这是 2026-10-15 明确确认过的取舍（接受磁盘故障即全丢），不是漏掉的待办。
 
 ### 界面耗时
 
