@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -116,8 +116,23 @@ public sealed class RecordSheet : Window
     /// <summary>itemId|slot -&gt; 当天已记剂量（界面显示用）。</summary>
     private readonly Dictionary<string, int> _counts = new();
 
-    /// <summary>本次操作栈，供撤销。Created=true 表示本次新建的事件。</summary>
-    private readonly List<(string Id, bool Created)> _undo = new();
+    /// <summary>
+    /// 本次操作栈，供撤销。
+    ///
+    /// 以前这里只记 (Id, Created)，于是撤销只能"把 dose 减 1"——一旦改过时间，
+    /// 撤销也把时间改不回来。现在每一步都拍下**改之前的 dose 与 when**，
+    /// 撤销就是把这两个值原样写回去（新增的仍然整条删掉）。
+    /// </summary>
+    private readonly List<UndoStep> _undo = new();
+
+    /// <summary>
+    /// 本屏记下/改过的记录 id。
+    ///
+    /// 「改时间」要能把**本屏记下的**那几条一起挪过去，但绝不能碰打开时就已存在的
+    /// 历史记录 —— 那些是别人的既成事实，改时间不该顺手改了它们。
+    /// 所以这里只收「这次打开之后经手过的」id，改时间时按这个集合重定时。
+    /// </summary>
+    private readonly HashSet<string> _session = new();
 
     /// <summary>itemId -&gt; 该品类所有行的引用，改动后局部刷新。</summary>
     private readonly Dictionary<string, List<ChipRef>> _chips = new();
@@ -575,6 +590,10 @@ public sealed class RecordSheet : Window
             // 用户自己选的日期：归属标注与"睡前"这层含义到此为止
             _attribution = "";
             _preSleep = false;
+            // 和改时间同一个道理：本屏刚记下的那几条要跟着挪到新日期，
+            // 否则它们留在旧日期上，PourDay 按新日期重灌之后就从界面上"消失"了
+            // —— 用户会以为刚记的那笔丢了。
+            RetimeSession();
             UpdateHeader();
             PourDay();
             BuildBody();
@@ -595,6 +614,16 @@ public sealed class RecordSheet : Window
         _timeBox.SetResourceReference(Control.ForegroundProperty, Theme.Ink);
         _timeBox.SetResourceReference(Control.BorderBrushProperty, Theme.LineStrong);
         _timeBox.LostFocus += (_, _) => CommitTime();
+        // 回车也提交。以前只有 LostFocus 一条路，而"敲完时间直接按回车记一笔"
+        // 恰好是主操作（Enter 记主推荐项）—— 焦点还在框里时 Enter 被这里的
+        // OnKeyDown 放行给窗口，结果记下去的还是提交前的旧时间。
+        _timeBox.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Return) return;
+            CommitTime();
+            e.Handled = true;
+        };
+        _timeBox.Tag = "time";     // 自检按这个 tag 找输入框（不再靠"第几个 TextBox"猜）
         Grid.SetColumn(_timeBox, 1);
         row.Children.Add(_timeBox);
         wrap.Children.Add(row);
@@ -615,22 +644,102 @@ public sealed class RecordSheet : Window
         return wrap;
     }
 
+    /// <summary>
+    /// 把时间框里的输入落成 _time。非法输入还原成当前值，不改时段。
+    ///
+    /// 只在"内容真的变了"时才重建主体：BuildBody 会重建整个常吃区，
+    /// 而它现在会被 Tap 在每一次写入前调用一次（见 CommitPendingTime）。
+    /// 每次都重建的话，点 ＋ 的那一行会被拆掉重挂，连点的手感立刻变差。
+    /// </summary>
     private void CommitTime()
     {
         var v = _timeBox.Text.Trim();
         if (!Stats0.TryParseTime(v, out var norm)) { _timeBox.Text = _time; return; }
+        if (norm == _time) { _timeBox.Text = _time; return; }   // 没改，别白重建一次
+        ApplyTime(norm);
+    }
+
+    /// <summary>
+    /// 写入前必须先调这个：时间框里可能还压着一份没提交的输入。
+    /// 内容没变时它什么都不做（不重建界面）。
+    /// </summary>
+    private void CommitPendingTime()
+    {
+        if (_timeBox is null) return;
+        var v = (_timeBox.Text ?? "").Trim();
+        if (v == _time) return;
+        if (Stats0.TryParseTime(v, out var norm) && norm != _time) ApplyTime(norm);
+        else _timeBox.Text = _time;
+    }
+
+    /// <summary>
+    /// 把 _time 改成指定值，连带时段与表头一起更新。
+    ///
+    /// **并且把本屏记下的那几条记录一起挪到这个新时间。**
+    ///
+    /// 这是"改了时间关掉弹层又变回去"的根因：以前这里只改界面上的 _time，
+    /// 已经落盘的那条完全没动。用户看到大字从 09:00 变成 17:20（以为生效了），
+    /// 关掉弹层再看那条记录还是 09:00 —— 因为整个过程没有任何一次写入。
+    ///
+    /// 只改本屏经手的记录（<see cref="_session"/>），不动打开时就已经存在的历史：
+    /// 改时间的意思是"我刚记的这笔其实发生在别的时刻"，不是"改写今天的所有记录"。
+    /// </summary>
+    private void ApplyTime(string norm)
+    {
         _time = norm;
-        _timeBox.Text = _time;
+        if (_timeBox is not null) _timeBox.Text = _time;
         var ns = SlotOf(_time);
         // 手动改过时间：凌晨那两档的"默认归属"不再成立，撤掉标注（时段本身照样跟着时间走）
         if (ns != _slot || _attribution.Length > 0) { _attribution = ""; _preSleep = false; }
+
         if (ns != _slot)
         {
             _slot = ns;
             PaintTabs();
         }
+
+        // 本屏记下的记录跟着改：时间换掉、时段跟着时间重算
+        RetimeSession();
+
         UpdateHeader();
         BuildBody();
+        RefreshFooter();
+    }
+
+    /// <summary>
+    /// 把本屏经手的记录重定时到当前的 _date / _time / _slot。
+    ///
+    /// 只动 <see cref="_session"/> 里的 id；库里已经找不到的跳过（可能被撤销删了）。
+    /// 时段按新时间重算 —— 17:20 属于「晚」，那条记录的 slot 也得跟着变成「晚」，
+    /// 否则它会留在「早」那一列，而统计页按 slot 汇总，数字会错位。
+    ///
+    /// 改日期和改时间都走这里：两处要的是同一件事（"我刚记的这笔其实发生在别处"），
+    /// 分成两份实现迟早只修好其中一份 —— 这次就是改时间修了、改日期还漏着。
+    /// </summary>
+    private void RetimeSession()
+    {
+        if (_session.Count == 0) return;
+        foreach (var id in _session.ToList())
+        {
+            var ev = _host.Db.Events.FirstOrDefault(x => x.Id == id);
+            if (ev is null) { _session.Remove(id); continue; }
+
+            var when = new When { Date = _date, Time = _time, Precision = "minute" };
+            var slot = SlotOf(_time);
+            var before = Snapshot(ev);
+            var beforeSlot = ev.Slot;
+            _host.UpdateEvent(id, null, when, ev.Dose, slot);
+
+            // 把这次重定时也记进撤销栈：改时间现在真的改写了记录，
+            // 撤销就该把时间和时段一起退回去，否则"撤销了但时间还在新值上"。
+            _undo.Add(new UndoStep
+            {
+                Id = id, ItemId = ev.ItemId, Dose = ev.Dose, When = before, Slot = beforeSlot,
+            });
+        }
+
+        // 时间和时段都换了，_cell / _counts 的键得按新时段重灌
+        PourDay();
     }
 
     private void NudgeMinute(int delta)
@@ -641,13 +750,7 @@ public sealed class RecordSheet : Window
         var total = h * 60 + m + delta;
         if (total < 0) total = 0;
         if (total > 24 * 60 - 1) total = 24 * 60 - 1;
-        _time = $"{total / 60:00}:{total % 60:00}";
-        _timeBox.Text = _time;
-        var ns = SlotOf(_time);
-        if (ns != _slot || _attribution.Length > 0) { _attribution = ""; _preSleep = false; }
-        if (ns != _slot) { _slot = ns; PaintTabs(); }
-        UpdateHeader();
-        BuildBody();
+        ApplyTime($"{total / 60:00}:{total % 60:00}");
     }
 
     private void SetSlot(string s)
@@ -941,32 +1044,57 @@ public sealed class RecordSheet : Window
     /// <summary>点 ＋：该格还没有事件就新建（dose=1），已有就改同一条（dose+1）。</summary>
     private void Tap(string itemId, string slot)
     {
+        // 写入前先把还在框里的时间落下来。
+        //
+        // 用户敲完 15:20 直接点 ＋（而不是先点到别处让它失焦）是很自然的操作，
+        // 而提交时机只有 LostFocus 时，这一笔就会用旧时间落盘 ——
+        // 表现正是"我明明改了时间，怎么存的还是原来那个"。
+        CommitPendingTime();
+
+        // 时段必须**重新取**，不能用进来的那个参数：
+        // 上面那次提交可能把时间从「早」推进「晚」，_slot 已经重算过，
+        // 而入参还是点下去那一刻的旧时段 —— 结果时间改了、列却记到旧时段里。
+        slot = _slot;
+
         var key = itemId + "|" + slot;
+        var when = new When { Date = _date, Time = _time, Precision = "minute" };
+
         if (_cell.TryGetValue(key, out var id))
         {
             var ev = _host.Db.Events.FirstOrDefault(x => x.Id == id);
             var d = ev?.Dose ?? 1;
+            // 快照必须在 UpdateEvent **之前**取。
+            // ev 是库里那条事件的活动引用，UpdateEvent 会把它的 When 换成新对象，
+            // 之后再读 ev.When 拿到的就是新时间 —— 撤销时就"退回"到新值，等于没退。
+            var before = Snapshot(ev);
             // slot 必须透传：Store.UpdateEvent 会把 slot 字段原样覆写（Store.cs:339），
             // 传 null 会把这条记录原本的时段洗掉（设计上点的是哪一列就记哪列）。
-            _host.UpdateEvent(id, null, null, d + 1, slot);
+            //
+            // when 也必须透传，而且这是「改了时间却存不上」的正主：
+            // 以前这里传 null，Store.UpdateEvent 就跳过 When（它不是无条件覆写），
+            // 于是同一条记录第二次累加时时间还停在第一次那个值上 ——
+            // 界面上大字已经是 10:30，落盘仍是 09:00，看起来就是"时间改了没保存"。
+            // 现在按"点 ＋ 那一刻的表头"写：日期取 _date、时间取 _time。
+            _host.UpdateEvent(id, null, when, d + 1, slot);
             _counts[key] = d + 1;
-            _undo.Add((id, false));
+            _undo.Add(new UndoStep { Id = id, ItemId = itemId, Dose = d, When = before });
+            _session.Add(id);          // 经手过 → 改时间时跟着挪
         }
         else
         {
             var eid = Guid.NewGuid().ToString("N")[..12];
-            _host.AddEvent(eid, itemId,
-                new When { Date = _date, Time = _time, Precision = "minute" }, 1, slot);
+            _host.AddEvent(eid, itemId, when, 1, slot);
             _cell[key] = eid;
             _counts[key] = 1;
-            _undo.Add((eid, true));
+            _undo.Add(new UndoStep { Id = eid, ItemId = itemId, Created = true });
+            _session.Add(eid);         // 本次新建 → 改时间时跟着挪
             BumpTotal(slot, +1);      // 新建一条 = 该时段全库条数 +1（BuildBody 会整体重算）
         }
         _lastItem = itemId;
         RefreshChip(itemId);
         RefreshPrimary();
         RefreshFooter();
-        ShowToast("已记", $"{Items.NameOf(itemId)} ×{_counts[key]} · {slot}");
+        ShowToast("已记", $"{Items.NameOf(itemId)} ×{_counts[key]} · {slot} · {when.Time}");
     }
 
     private void Dec(string itemId, string slot)
@@ -981,12 +1109,19 @@ public sealed class RecordSheet : Window
             _cell.Remove(key);
             _counts.Remove(key);
             BumpTotal(slot, -1);
+            _undo.Add(new UndoStep
+            {
+                Id = id, ItemId = itemId, Removed = true,
+                Dose = d, When = Snapshot(ev), Slot = ev?.Slot ?? slot,
+            });
         }
         else
         {
             // 同上：slot 透传，别让减一次份数把时段顺手洗掉
+            var before = Snapshot(ev);
             _host.UpdateEvent(id, null, null, d - 1, slot);
             _counts[key] = d - 1;
+            _undo.Add(new UndoStep { Id = id, ItemId = itemId, Dose = d, When = before });
         }
         _lastItem = itemId;
         RefreshChip(itemId);
@@ -1000,25 +1135,64 @@ public sealed class RecordSheet : Window
     private void Undo()
     {
         if (_undo.Count == 0) return;
-        var (id, created) = _undo[^1];
+        var step = _undo[^1];
         _undo.RemoveAt(_undo.Count - 1);
-        if (created)
+
+        if (step.Created)
         {
-            _host.RemoveEvent(id);
+            // 本次新建的整条删掉
+            _host.RemoveEvent(step.Id);
+        }
+        else if (step.Removed)
+        {
+            // 本次把一条减到了 0（整条删了）：撤销就是按原样重新建回来。
+            // 以前这里不分这一档，撤销一条删掉的记录等于什么都没做。
+            _host.AddEvent(step.Id, step.ItemId, step.When ?? new When { Date = _date, Time = _time },
+                step.Dose, step.Slot);
         }
         else
         {
-            var ev = _host.Db.Events.FirstOrDefault(x => x.Id == id);
-            var d = ev?.Dose ?? 1;
-            // 撤销一次编辑 = 把该格剂量减 1；slot 透传，避免把时段洗掉。
-            if (d <= 1) _host.RemoveEvent(id);
-            else _host.UpdateEvent(id, null, null, d - 1, ev?.Slot);
+            // 撤销一次累加 / 一次改时间 = 把 dose、when、slot 一起写回改动前的样子。
+            // 只回退 dose 是不够的：这一步可能同时把时间从 09:00 推到 10:30，
+            // 还可能把时段从「早」挪到「晚」。
+            var ev = _host.Db.Events.FirstOrDefault(x => x.Id == step.Id);
+            if (ev is null) { /* 已经被别处删掉了，撤销无从下手 */ }
+            else if (step.Dose <= 0 || step.Dose is null) _host.RemoveEvent(step.Id);
+            else _host.UpdateEvent(step.Id, step.ItemId, step.When, step.Dose,
+                step.Slot ?? ev.Slot);
         }
         // 撤销后从库里重新同步当天格映射，避免引用到已删的事件
         PourDay();
         BuildBody();
         RefreshFooter();
         ShowToast("已撤销", Items.NameOf(_lastItem ?? ""));
+    }
+
+    /// <summary>
+    /// 拍一份 When 的**副本**。
+    ///
+    /// 不能直接把 ev.When 塞进撤销栈：那是库里那条事件的活动对象，
+    /// UpdateEvent 会把整个 When 换掉/改写，快照跟着一起变，
+    /// 撤销时就"退回"到新值 —— 表现是撤销了但时间没动。
+    /// </summary>
+    private static When? Snapshot(IntakeEvent? e) =>
+        e?.When is { } w ? new When { Date = w.Date, Time = w.Time, Precision = w.Precision } : null;
+
+    /// <summary>
+    /// 一步可撤销操作的快照。
+    ///
+    /// Dose / When / Slot 记的是**改之前**的值，撤销就是照着它写回去。
+    /// Removed=true 表示这一步是"减到 0、整条被删"，撤销要把它重新建出来。
+    /// </summary>
+    private sealed class UndoStep
+    {
+        public string Id { get; init; } = "";
+        public string ItemId { get; init; } = "";
+        public bool Created { get; init; }
+        public bool Removed { get; init; }
+        public int? Dose { get; init; }
+        public When? When { get; init; }
+        public string? Slot { get; init; }
     }
 
     /// <summary>把当前日期下已有的记录灌进 _cell / _counts。</summary>

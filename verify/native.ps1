@@ -110,6 +110,19 @@ if (Test-Path $exe) {
             $code = 1
         }
 
+        # 单实例召回：窗口收进托盘之后是隐藏的，旧实现用 Process.MainWindowHandle
+        # 找不到它，于是「再启动一次」只弹一句「已在运行」就退出，窗口永远出不来。
+        # 断言隐藏之后按窗口类名仍然找得到主窗口。
+        Write-Host "`n=== 单实例召回 ===" -ForegroundColor Cyan
+        $sLog = Join-Path $timingDir "instance.log"
+        cmd /c "`"$exeAbs`" --instance-test > `"$sLog`" 2>&1"
+        $sCode = $LASTEXITCODE
+        if (Test-Path $sLog) { Get-Content $sLog | ForEach-Object { Write-Host "  $_" } }
+        if ($sCode -ne 0) {
+            Write-Host "单实例召回坏了：收进托盘的窗口会再也叫不回来`n" -ForegroundColor Red
+            $code = 1
+        }
+
         # 图标文件结构。这个错不崩、不报错，只是图标在某些地方显示空白，
         # 只能靠断言守。
         $iLog = Join-Path $timingDir "icon.log"

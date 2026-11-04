@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -52,6 +52,9 @@ internal static class Shot
         // 诊断：时间范围筛选的逻辑自检
         if (args.Length >= 1 && args[0] == "--tray-test")
             return TrayTest();
+
+        if (args.Length >= 1 && args[0] == "--instance-test")
+            return InstanceTest();
 
         if (args.Length >= 1 && args[0] == "--tray-diag")
             return TrayDiag();
@@ -307,6 +310,7 @@ internal static class Shot
 
         using (var me = System.Diagnostics.Process.GetCurrentProcess())
             W($"本进程会话: {me.SessionId}  （交互式桌面通常 >=1）");
+        W($"本进程完整性: {MainWindow.IntegrityLabel}");
 
         W();
         W("--- 通知区域窗口（托盘图标必须挂在这些窗口下面）---");
@@ -329,9 +333,23 @@ internal static class Shot
         win.Show();
         win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
 
-        W($"  NotifyIcon.Visible   : {MainWindow.TrayRegistered}");
+        W($"  NotifyIcon.Visible   : {MainWindow.TrayRegistered}   ← 自报值，只等于刚写进去的 true");
         W($"  取到的图标尺寸       : {MainWindow.TrayIconSize}px");
         W($"  TrayError            : {(MainWindow.TrayError == "" ? "（无）" : MainWindow.TrayError)}");
+
+        // 自报不算数，问 Shell 才算。WinForms 的标识藏在私有字段里，反射取。
+        var (trayHwnd, trayId, idKnown) = TrayIdentity(win);
+        if (idKnown)
+        {
+            var (hr, rect) = ShellIconRect(trayHwnd, trayId);
+            W($"  Shell 那侧的图标      : {(hr == 0 ? $"已收下  rect={rect}" : $"查不到  hr=0x{hr:X8}")}"
+                + $"  (hwnd=0x{trayHwnd.ToInt64():X8} uid={trayId})");
+        }
+        else
+        {
+            W("  Shell 那侧的图标      : 跳过（WinForms 私有字段名变了，取不到标识）");
+        }
+        W($"  Windows 是否让它常驻  : {PromotionState()}");
 
         try
         {
@@ -352,14 +370,21 @@ internal static class Shot
         W();
         W("--- 判读 ---");
         var areaOk = FindWindow("Shell_TrayWnd", null) != IntPtr.Zero;
-        if (exp.Length == 0)
+        if (MainWindow.IntegrityLabel.StartsWith("Low"))
+        {
+            W("  本进程是低完整性级别，UIPI 禁止它向中等完整性的任务栏发消息 ——");
+            W("  Shell_NotifyIcon 必然失败（实测 Win32Error=5 拒绝访问），图标不可能出现。");
+            W("  换成从资源管理器双击 exe，或用普通的 Windows 终端启动。");
+        }
+        else if (exp.Length == 0)
             W("  explorer 没在跑 → 托盘图标无处注册。这不是程序的问题。");
         else if (!areaOk)
             W("  explorer 在跑但找不到 Shell_TrayWnd → 这个进程看不到桌面，");
         else if (MainWindow.TrayRegistered)
             W("  环境正常、注册成功。看不到图标只可能是：");
+        W("    · 新图标被 Windows 收在「^」折叠区（IsPromoted=0）→ 点 ^ 展开后把它拖到任务栏，");
+        W("      或 设置 → 个性化 → 任务栏 → 其他系统托盘图标 → 打开 StackIt");
         W("    · 通知区域被设成「永不显示」→ 任务栏设置 → 通知区域");
-        W("    · 图标收在「^」折叠区 → 点任务栏右下角的 ^ 展开");
         W("    · 程序已经关了 → 托盘图标只在程序运行时存在");
         W("    · 多显示器 → 图标可能跑到副屏任务栏上");
 
@@ -374,8 +399,107 @@ internal static class Shot
         return true;
     }
 
+    // 第二个参数传 null 是 Win32 的正常用法：只按类名匹配，不管窗口标题。
+    // 声明成 string? 才对，否则调用点全是 CS8625。
     [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
-    private static extern IntPtr FindWindow(string c, string n);
+    private static extern IntPtr FindWindow(string c, string? n);
+
+    /// <summary>
+    /// 取出 NotifyIcon 真正的 NOTIFYICONDATA 标识：窗口句柄 + uID。
+    ///
+    /// WinForms 把这两个藏在私有字段里，没有公开 API。但「Shell 到底收没收到图标」
+    /// 只能拿这两个值去问（Shell_NotifyIconGetRect）—— `Visible` 那个属性只是自报。
+    /// 私有字段名哪天变了，这里返回 Known=false，诊断少一段，不影响别的功能。
+    /// </summary>
+    private static (IntPtr Hwnd, uint Id, bool Known) TrayIdentity(MainWindow win)
+    {
+        try
+        {
+            var tray = win.Tray;
+            var type = tray.GetType();
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var idField = type.GetField("_id", flags);
+            var windowField = type.GetField("_window", flags);
+            if (idField is null || windowField is null) return (IntPtr.Zero, 0, false);
+
+            var id = Convert.ToUInt32(idField.GetValue(tray) ?? 0u);
+            var native = windowField.GetValue(tray) as System.Windows.Forms.NativeWindow;
+            var hwnd = native?.Handle ?? IntPtr.Zero;
+            return (hwnd, id, hwnd != IntPtr.Zero);
+        }
+        catch
+        {
+            return (IntPtr.Zero, 0, false);
+        }
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NotifyIconIdentifier
+    {
+        public uint Size;
+        public IntPtr Hwnd;
+        public uint Id;
+        public Guid GuidItem;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct IconRect
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [System.Runtime.InteropServices.DllImport("shell32.dll")]
+    private static extern int Shell_NotifyIconGetRect(ref NotifyIconIdentifier id, out IconRect rect);
+
+    /// <summary>问 Shell 要这个图标的矩形。返回 0 表示图标确实还在通知区域里。</summary>
+    private static (int Code, string Rect) ShellIconRect(IntPtr hwnd, uint id)
+    {
+        var ident = new NotifyIconIdentifier
+        {
+            Size = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NotifyIconIdentifier>(),
+            Hwnd = hwnd,
+            Id = id,
+        };
+        var hr = Shell_NotifyIconGetRect(ref ident, out var rect);
+        return hr == 0 ? (hr, $"{rect.Left},{rect.Top} - {rect.Right},{rect.Bottom}") : (hr, "");
+    }
+
+    /// <summary>
+    /// Windows 11 给每个托盘图标存了一份「要不要常驻在任务栏上」的设置：
+    /// HKCU\Control Panel\NotifyIconSettings\&lt;guid&gt;，值名 IsPromoted。
+    ///
+    /// **新程序的图标默认 IsPromoted=0** —— 注册是成功的，只是被收在「^」折叠区里。
+    /// 这是「托盘看不到图标」最常见的原因，比"没注册上"常见得多，而且从程序里
+    /// 看不出来（注册 API 不会告诉你）。所以直接读这份设置说实话。
+    /// </summary>
+    private static string PromotionState()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath ?? "";
+            using var root = Microsoft.Win32.Registry.CurrentUser
+                .OpenSubKey(@"Control Panel\NotifyIconSettings");
+            if (root is null) return "（读不到 NotifyIconSettings）";
+
+            foreach (var name in root.GetSubKeyNames())
+            {
+                using var sub = root.OpenSubKey(name);
+                if (sub?.GetValue("ExecutablePath") is not string path) continue;
+                if (!string.Equals(path, exe, StringComparison.OrdinalIgnoreCase)) continue;
+
+                return sub.GetValue("IsPromoted") is int flag
+                    ? flag == 1
+                        ? "IsPromoted=1，应当常驻在任务栏上"
+                        : "IsPromoted=0，被收在「^」折叠区（点 ^ 展开，或到设置里打开）"
+                    : "有设置条目但没有 IsPromoted";
+            }
+            return "没有这个 exe 的条目 —— Windows 还没记住它的图标";
+        }
+        catch (Exception ex)
+        {
+            return "（读失败：" + ex.GetType().Name + "）";
+        }
+    }
 
     /// <summary>
     /// 托盘行为自检。
@@ -443,33 +567,76 @@ internal static class Shot
             Check("托盘图标可解码", false, ex.GetType().Name);
         }
 
-        // 真退出走 Close()，断言窗口隐藏且程序没退
+        // 真退出走 Close()。托盘可用时应当只是隐藏、程序不退；
+        // 托盘不可用时**必须真退出** —— 否则留下一个没有窗口、也没有图标的
+        // 后台进程，用户只能去任务管理器收拾。
+        var trayOk = MainWindow.TrayRegistered;
         win.Close();
-        win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
 
-        Check("点 X 后程序仍在运行", !MainWindow.ShutdownRequested, "ShutdownRequested=False");
-
-        // 托盘注册成功时应当隐藏；注册失败时应当直接退出（藏起来就再也开不了）。
-        // 两种都是正确行为，分开断言，不要在这里混为一谈。
-        if (MainWindow.TrayRegistered)
+        if (trayOk)
         {
+            win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
+            Check("点 X 后程序仍在运行", !MainWindow.ShutdownRequested, "ShutdownRequested=False");
             Check("点 X 后窗口已隐藏", !win.IsVisible, $"IsVisible={win.IsVisible}");
-        }
-        else
-        {
-            Check("托盘不可用时不藏窗口", !win.IsVisible || win.IsLoaded,
-                "已走退出分支并提示用户");
-        }
 
-        // 从托盘叫回来（仅在托盘可用时）
-        if (MainWindow.TrayRegistered)
-        {
             win.Restore();
             win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
             Check("能从托盘叫回", win.IsVisible, $"IsVisible={win.IsVisible}");
         }
+        else
+        {
+            Check("托盘不可用时点 X 真退出", MainWindow.ShutdownRequested,
+                $"ShutdownRequested={MainWindow.ShutdownRequested}");
+        }
 
         Console.WriteLine(fails.Count == 0 ? "托盘自检通过" : $"托盘自检失败 {fails.Count} 项");
+        foreach (var f in fails) Console.WriteLine("  FAIL " + f);
+        Environment.Exit(fails.Count == 0 ? 0 : 1);
+        return true;
+    }
+
+    /// <summary>
+    /// 单实例召回自检。
+    ///
+    /// 守的是一种失联：窗口收进托盘之后是**隐藏**的，而隐藏窗口没有
+    /// 「主窗口句柄」—— Process.MainWindowHandle 对它返回 0。旧实现据此判断
+    /// 「没有已有窗口」直接退出，于是再启动只会弹一句「程序已在运行」，
+    /// 窗口永远不出来；托盘图标要是恰好也看不到（收在「^」折叠区、
+    /// Explorer 重启后丢了），程序就此失联，只能去任务管理器杀。
+    ///
+    /// 这里断言的就是那一步：窗口隐藏之后，按窗口类名枚举仍然找得到它。
+    /// 跨进程的「发消息 → 对面自己 Show()」不在自检范围内（自检自己就是
+    /// 那个进程，消息要等 UI 线程泵），那条由 README 里的手工步骤守。
+    /// </summary>
+    private static bool InstanceTest()
+    {
+        var fails = new List<string>();
+        MainWindow.SuppressDialogs = true;
+        void Check(string label, bool ok, string detail)
+        {
+            Console.WriteLine($"  {(ok ? "PASS" : "FAIL")}  {label}  {detail}");
+            if (!ok) fails.Add(label);
+        }
+
+        var win = new MainWindow();
+        win.Show();
+        win.UpdateLayout();
+
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(win).Handle;
+        Check("窗口句柄已创建", hwnd != IntPtr.Zero, $"0x{hwnd.ToInt64():X}");
+
+        var visible = SingleInstance.FindAppWindow();
+        Check("可见时找得到主窗口", visible == hwnd, $"找到 0x{visible.ToInt64():X}");
+
+        win.Hide();
+        Check("收进托盘后窗口不可见", !win.IsVisible, $"IsVisible={win.IsVisible}");
+
+        // 正题：隐藏之后还得找得到。旧实现用的 Process.MainWindowHandle
+        // 在这一步必然返回 0。
+        var hidden = SingleInstance.FindAppWindow();
+        Check("隐藏后仍找得到主窗口", hidden == hwnd, $"找到 0x{hidden.ToInt64():X}");
+
+        Console.WriteLine(fails.Count == 0 ? "单实例自检通过" : $"单实例自检失败 {fails.Count} 项");
         foreach (var f in fails) Console.WriteLine("  FAIL " + f);
         Environment.Exit(fails.Count == 0 ? 0 : 1);
         return true;
@@ -482,7 +649,6 @@ internal static class Shot
         Environment.Exit(code);
         return true;
     }
-
     /// <summary>
     /// 「记一笔」弹层的点击回归自检。
     ///
@@ -619,6 +785,7 @@ internal static class Shot
             }
 
             var undoBtn = buttons.FirstOrDefault(b => b.Content as string == "撤销");
+            Check("有「撤销」按钮", undoBtn is not null);
             // 重新 +1 到 dose=3（每次 + 都进撤销栈），再撤销两次应 dose 3→2→1、仍 1 条。
             var n0 = win.Db.Events.Count(e => e.ItemId == "vitC");
             if (incBtn is not null)
@@ -630,14 +797,19 @@ internal static class Shot
                 Click(incBtn);
                 win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
             }
+
             // 剂量值快照：Event 是同一实例，Undo 会就地改它，必须取值而非抓引用
             var m0 = win.Db.Events.FirstOrDefault(e => e.ItemId == "vitC")?.Dose;
-            Click(undoBtn);
-            win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
-            var m1 = win.Db.Events.FirstOrDefault(e => e.ItemId == "vitC")?.Dose;
-            Click(undoBtn);
-            win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
-            var m2 = win.Db.Events.FirstOrDefault(e => e.ItemId == "vitC")?.Dose;
+            int? m1 = null, m2 = null;
+            if (undoBtn is not null)
+            {
+                Click(undoBtn);
+                win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
+                m1 = win.Db.Events.FirstOrDefault(e => e.ItemId == "vitC")?.Dose;
+                Click(undoBtn);
+                win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
+                m2 = win.Db.Events.FirstOrDefault(e => e.ItemId == "vitC")?.Dose;
+            }
             Check("撤销两步：事件条数不变", win.Db.Events.Count(e => e.ItemId == "vitC") == n0 + 1,
                 $"{win.Db.Events.Count(e => e.ItemId == "vitC")} 条");
             Check("撤销两步：dose 3->2->1", (m0 == 3 && m1 == 2 && m2 == 1),
@@ -743,6 +915,291 @@ internal static class Shot
             Log("");
             foreach (var e in win.Db.Events)
                 Log($"    {e.When.Date} {e.When.Time}  {e.ItemId}  dose={e.Dose ?? 1}  slot={e.Slot}");
+
+            // —— 8. 「改时间」必须真的作用到写入 ——
+            //
+            // 这一段守的是用户实际报的那个问题：在弹层里把时间改了，
+            // 记下来的还是旧时间。两种走法都要管住：
+            //   (a) 改完时间再点「已经记过的同一项」—— 走 UpdateEvent 那条路，
+            //       以前它是 when:null，旧时间原样留着，等于改了白改；
+            //   (b) 改完时间点「还没记过的项」—— 走 AddEvent，必须用新时间。
+            // 不写这两条，改时间坏了也照样全绿（原自检只验过新开弹层时的默认时刻）。
+            {
+                Views.RecordSheet.NowOverride = () => today.AddHours(9);   // 09:00 → 早
+
+                foreach (var oldId in win.Db.Events
+                             .Where(x => x.ItemId == "vitC").Select(x => x.Id).ToList())
+                    win.RemoveEvent(oldId);
+
+                var s2 = new Views.RecordSheet(win);
+                s2.Show();
+                s2.UpdateLayout();
+                win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
+
+                Button? Inc() => FindAll(s2).OfType<Button>()
+                    .FirstOrDefault(b => b.Tag is string t && t == "inc|vitC");
+                void Pump() => win.Dispatcher.Invoke(() => { },
+                    System.Windows.Threading.DispatcherPriority.Background);
+
+                var inc2 = Inc();
+                if (inc2 is null)
+                {
+                    Check("改时间：常吃区找得到 ＋", false);
+                }
+                else
+                {
+                    Click(inc2);
+                    Pump();
+                    var first = win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC");
+                    Check("改时间基线：第一条落在 09:00", first?.When.Time == "09:00",
+                        $"time={first?.When.Time}");
+
+                    // 展开时间条，改成 10:30（仍在「早」这一档，所以格映射不变）
+                    var change = FindAll(s2).OfType<Button>()
+                        .FirstOrDefault(b => b.Content as string == "改时间");
+                    if (change is not null) { Click(change); Pump(); }
+
+                    var tb = FindAll(s2).OfType<TextBox>()
+                        .FirstOrDefault(t => ReferenceEquals(t.Tag, "time"));
+                    Check("改时间：时间框带 tag=time（能被找到）", tb is not null);
+
+                    if (tb is not null)
+                    {
+                        // 真实路径是「敲完 → 点 ＋ 让它失焦提交」。这里先把同样的
+                        // 提交时机造出来：改文本后触发 LostFocus，再点 ＋。
+                        tb.Text = "10:30";
+                        tb.RaiseEvent(new System.Windows.RoutedEventArgs(
+                            System.Windows.UIElement.LostFocusEvent));
+                        Pump();
+
+                        // 改时间现在会自己把这笔已记的记录挪到新时间（见 8c），
+                        // 所以这里不再需要"点 ＋ 才生效"那层间接：
+                        // 敲完按回车，那个 dose=1 的记录就该在 10:30 了。
+                        Check("改时间后已记的那条自动跟随（09:00 → 10:30）",
+                            win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC")?.When.Time == "10:30",
+                            $"time={win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC")?.When.Time}");
+
+                        var inc3 = Inc();
+                        if (inc3 is not null) { Click(inc3); Pump(); }
+
+                        var again = win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC");
+                        Check("改时间后连点同一项：时间跟着走（09:00 → 10:30）",
+                            again?.When.Time == "10:30", $"time={again?.When.Time}");
+                        Check("改时间后连点同一项：仍是同一条（dose=2）",
+                            win.Db.Events.Count(x => x.ItemId == "vitC") == 1 && again?.Dose == 2,
+                            $"条数={win.Db.Events.Count(x => x.ItemId == "vitC")} dose={again?.Dose}");
+
+                        // 撤销：连点两次（改时间那次重定时 + 这次累加）之后，
+                        // 退到底应当回到"09:00、dose=1"——也就是改时间之前的样子。
+                        var undo2 = FindAll(s2).OfType<Button>()
+                            .FirstOrDefault(b => b.Content as string == "撤销");
+                        if (undo2 is not null)
+                        {
+                            for (var k = 0; k < 8; k++)
+                            {
+                                var cur = win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC");
+                                if (cur is null) break;
+                                if (cur.When.Time == "09:00" && cur.Dose == 1) break;
+                                Click(undo2);
+                                Pump();
+                            }
+                            var back = win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC");
+                            Check("一直撤销能退回改时间之前（09:00 / dose=1）",
+                                back?.When.Time == "09:00" && back?.Dose == 1,
+                                $"time={back?.When.Time} dose={back?.Dose}");
+                        }
+
+                        // (b) 换一个还没记过的项：AddEvent 必须用新时间
+                        var incZinc = FindAll(s2).OfType<Button>()
+                            .FirstOrDefault(b => b.Tag is string t && t == "inc|zinc");
+                        if (incZinc is not null)
+                        {
+                            Click(incZinc);
+                            Pump();
+                            var zinc = win.Db.Events.FirstOrDefault(x => x.ItemId == "zinc");
+                            Check("改时间后点新项：新记的一条用新时间",
+                                zinc?.When.Time == "10:30", $"time={zinc?.When.Time}");
+                        }
+                        else
+                        {
+                            // 常吃区不一定含锌，退而求其次：断言"新事件用新时间"这条
+                            // 已经在 (a) 的新建分支覆盖过，这里只是少一条更强的证据。
+                            Log("  SKIP  锌不在常吃区，跳过新项断言");
+                        }
+                    }
+                }
+                s2.Close();
+                Views.RecordSheet.NowOverride = null;
+            }
+
+            // —— 8b. 敲完时间**不失焦**、直接点 ＋ ——
+            //
+            // 这是真实用户最常走的一条：在时间框里敲 15:20，鼠标直接去点那一行的 ＋，
+            // 中间没有任何"点别处让它失焦"的动作。只靠 LostFocus 提交的实现，
+            // 这一笔会按提交前的旧时间落盘 —— 用户看到的就是"我改了时间，没保存"。
+            // 上面 8 那段是手动触发 LostFocus 的，覆盖不到这条。
+            {
+                Views.RecordSheet.NowOverride = () => today.AddHours(9);
+                foreach (var oldId in win.Db.Events
+                             .Where(x => x.ItemId == "vitC").Select(x => x.Id).ToList())
+                    win.RemoveEvent(oldId);
+
+                var s3 = new Views.RecordSheet(win);
+                s3.Show();
+                s3.UpdateLayout();
+                win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
+
+                void Pump3() => win.Dispatcher.Invoke(() => { },
+                    System.Windows.Threading.DispatcherPriority.Background);
+                var change = FindAll(s3).OfType<Button>()
+                    .FirstOrDefault(b => b.Content as string == "改时间");
+                if (change is not null) { Click(change); Pump3(); }
+
+                var tb = FindAll(s3).OfType<TextBox>()
+                    .FirstOrDefault(t => ReferenceEquals(t.Tag, "time"));
+                var inc = FindAll(s3).OfType<Button>()
+                    .FirstOrDefault(b => b.Tag is string t && t == "inc|vitC");
+
+                if (tb is not null && inc is not null)
+                {
+                    // 17:20 —— 明确落在「晚」那一档（时段阈值：<11 早 / <16 中 / 其余晚），
+                    // 与打开时的「早」不同，这样"时段有没有跟着时间重算"才可判定。
+                    tb.Text = "17:20";     // 只改文本，**不**触发 LostFocus
+                    Click(inc);            // 直接点 ＋
+                    Pump3();
+                    var got = win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC");
+                    Check("敲完时间不失焦直接点 ＋：用新时间（09:00 → 17:20）",
+                        got?.When.Time == "17:20", $"time={got?.When.Time}");
+                    // 时段必须跟着重算（这条是原来就有的语义）
+                    Check("敲完时间不失焦直接点 ＋：时段跟着改（早 → 晚）",
+                        got?.Slot == "晚", $"slot={got?.Slot}");
+                }
+                else
+                {
+                    Check("敲完时间不失焦直接点 ＋：找得到时间框与 ＋", false);
+                }
+                s3.Close();
+                Views.RecordSheet.NowOverride = null;
+            }
+
+            // —— 8c. 已经记下的那一条：改时间 → 按 Enter → 关掉弹层 → 读回磁盘 ——
+            //
+            // 与 8 / 8b 不是同一件事：那两条测的是"下一次点 ＋ 用哪个时间"，
+            // 这一条测的是"改时间有没有把**已经落盘的那一条**改掉"。
+            // 用户的走法就是：先点 ＋ 记下（09:00），再「改时间」敲 17:20 按回车，
+            // 弹层上大字确实变成 17:20 了 —— 关掉出来看，那条还是 09:00。
+            // 也就是说"改时间"当时只改了界面上的 _time，没有写回任何记录。
+            {
+                Views.RecordSheet.NowOverride = () => today.AddHours(9);
+                foreach (var oldId in win.Db.Events
+                             .Where(x => x.ItemId == "vitC").Select(x => x.Id).ToList())
+                    win.RemoveEvent(oldId);
+
+                var s4 = new Views.RecordSheet(win);
+                s4.Show();
+                s4.UpdateLayout();
+                win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
+
+                void Pump4() => win.Dispatcher.Invoke(() => { },
+                    System.Windows.Threading.DispatcherPriority.Background);
+
+                // 1) 先记下一条（09:00 · 早）
+                var inc4 = FindAll(s4).OfType<Button>()
+                    .FirstOrDefault(b => b.Tag is string t && t == "inc|vitC");
+                if (inc4 is not null) { Click(inc4); Pump4(); }
+                var saved = win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC");
+                Check("改时间（已记的那条）：基线是 09:00", saved?.When.Time == "09:00",
+                    $"time={saved?.When.Time}");
+
+                // 2) 展开时间条，敲 17:20，按 Enter（不走失焦）
+                var change4 = FindAll(s4).OfType<Button>()
+                    .FirstOrDefault(b => b.Content as string == "改时间");
+                if (change4 is not null) { Click(change4); Pump4(); }
+
+                var tb4 = FindAll(s4).OfType<TextBox>()
+                    .FirstOrDefault(t => ReferenceEquals(t.Tag, "time"));
+                if (tb4 is not null)
+                {
+                    tb4.Text = "17:20";
+                    PressKey(tb4, System.Windows.Input.Key.Enter);
+                    Pump4();
+
+                    // 3) 界面上确实显示成 17:20（这一点用户已经确认过"有效果"）
+                    Check("改时间（已记的那条）：界面显示 17:20", FindText(s4, "17:20"));
+
+                    // 4) 关键一步：库里那条**已经存在的**记录也得变成 17:20
+                    var cur = win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC");
+                    Check("改时间（已记的那条）：库里那条跟着改（09:00 → 17:20）",
+                        cur?.When.Time == "17:20", $"time={cur?.When.Time}");
+                    Check("改时间（已记的那条）：时段跟着改（早 → 晚）",
+                        cur?.Slot == "晚", $"slot={cur?.Slot}");
+                }
+                else
+                {
+                    Check("改时间（已记的那条）：找得到时间框", false);
+                }
+
+                s4.Close();
+                Pump4();
+
+                // 5) 关掉弹层后从磁盘重新读：这一条必须还在 17:20。
+                //    只查内存会被"其实没 Save"骗过，所以这里真的重新 Load 一次。
+                var onDisk = Core.Store.Load().Events.FirstOrDefault(x => x.ItemId == "vitC");
+                Check("改时间（已记的那条）：关掉弹层后磁盘上仍是 17:20",
+                    onDisk?.When.Time == "17:20", $"time={onDisk?.When.Time}");
+                Views.RecordSheet.NowOverride = null;
+            }
+
+            // —— 8d. 改日期同样要真的搬过去 ——
+            //
+            // 「改时间」和「改日期」在界面上是同一个展开条里的两个控件，但对用户来说
+            // 是同一件事：我刚记的这笔其实发生在别处。两处必须都真的写回，
+            // 否则又是"界面变了、关掉就没了"。
+            {
+                Views.RecordSheet.NowOverride = () => today.AddHours(9);
+                foreach (var oldId in win.Db.Events
+                             .Where(x => x.ItemId == "vitC").Select(x => x.Id).ToList())
+                    win.RemoveEvent(oldId);
+
+                var s5 = new Views.RecordSheet(win);
+                s5.Show();
+                s5.UpdateLayout();
+                win.Dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.Background);
+
+                void Pump5() => win.Dispatcher.Invoke(() => { },
+                    System.Windows.Threading.DispatcherPriority.Background);
+
+                var inc5 = FindAll(s5).OfType<Button>()
+                    .FirstOrDefault(b => b.Tag is string t && t == "inc|vitC");
+                if (inc5 is not null) { Click(inc5); Pump5(); }
+                var before = win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC");
+                Check("改日期（已记的那条）：基线在今天", before?.When.Date == Core.Stats.Iso(today),
+                    $"date={before?.When.Date}");
+
+                var change5 = FindAll(s5).OfType<Button>()
+                    .FirstOrDefault(b => b.Content as string == "改时间");
+                if (change5 is not null) { Click(change5); Pump5(); }
+
+                var dp5 = FindAll(s5).OfType<DatePicker>().FirstOrDefault();
+                if (dp5 is not null)
+                {
+                    var target = today.AddDays(-2);
+                    dp5.SelectedDate = target;
+                    Pump5();
+
+                    var moved = win.Db.Events.FirstOrDefault(x => x.ItemId == "vitC");
+                    Check("改日期（已记的那条）：库里那条跟着搬到前天",
+                        moved?.When.Date == Core.Stats.Iso(target), $"date={moved?.When.Date}");
+                }
+                else
+                {
+                    Check("改日期（已记的那条）：找得到日期选择器", false);
+                }
+
+                s5.Close();
+                Pump5();
+                Views.RecordSheet.NowOverride = null;
+            }
 
             // 反证隔离生效：自检写的数据必须落在临时目录
             Check("自检数据落在临时目录",
