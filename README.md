@@ -1,4 +1,4 @@
-﻿# StackIt
+# StackIt
 
 个人服用记录。Windows 桌面应用，导入 `记录.md`，立刻看到三年规律；之后随手记、随时导出。
 
@@ -330,10 +330,67 @@ native\dist\StackIt.App.exe --filter-test   # 筛选自检，24 项
 `NotifyIcon.Visible = true` 要经过 Explorer（`Shell_NotifyIcon` 往它的通知区域塞图标）。
 **没有 explorer.exe 的环境**（服务、沙箱、部分远程会话、远程桌面断开后）
 注册会**静默失败**：不抛异常、不打日志，图标只是永远不出现。
-所以 `SetupTray()` 设完立刻回读 `TrayRegistered`，失败就走另一条路。
 
-**注册失败时不能藏窗口。** 藏了用户就没法再打开，只能去任务管理器杀进程，
-数据还没存就丢了。这种情况下直接退出，并弹窗说清楚原因。
+这里有个当初没看出来的坑：`NotifyIcon.Visible` 的 getter **只是把它刚写进去的值读回来**，
+Shell 收没收到它并不知道。所以 `SetupTray()` 里那句回读
+（`TrayRegistered = _tray.Visible`）永远为 true —— `OnClosing` 里
+「注册失败就别藏、直接退出」那条分支实际上是死代码。托盘图标到底在不在，只能靠人看。
+
+所以**不能只靠托盘**当唯一出口。现在有两条命令行兜底：
+
+| 场景 | 命令 | 行为 |
+|---|---|---|
+| 窗口收进托盘了，找不到图标 | `native\dist\StackIt.App.exe` | 第二个实例找到已有窗口（**包括隐藏的**），让它自己 `Show()`，然后安静退出 |
+| 想退出，但点不到托盘右键菜单 | `native\dist\StackIt.App.exe --quit` | 让在跑的那个实例走 `Quit()` 正常退出 |
+
+`--quit` 之前没有替代品：托盘图标一旦看不见，退出就只能去任务管理器结束进程。
+
+### 低完整性（沙箱里启动）→ 托盘图标必然没有
+
+这条是 2026-10-20 实测出来的，比"图标在折叠区"更隐蔽：如果 StackIt 是从
+**沙箱 / 受限令牌**的终端里启动的，进程完整性级别是 `Low`，而 explorer 是 `Medium`。
+Windows 的 UIPI 禁止低完整性进程向中等完整性的任务栏发窗口消息，
+原生 `Shell_NotifyIcon` 直接返回 `false` + **`ERROR_ACCESS_DENIED(5)`** ——
+WinForms 的 `NotifyIcon` 把这个失败吞掉，`Visible` 仍然返回 true。
+
+症状和"图标在折叠区"一模一样，但**永远修不好**：折叠区里也没有。
+
+判断方法（`--tray-diag` 会直接打印）：
+
+```powershell
+native\dist\StackIt.App.exe --tray-diag
+# 本进程完整性: Low (0x1000) —— 托盘图标会被 UIPI 挡掉
+```
+
+实测对照：沙箱里的 shell = `Low`、从它启动的 `StackIt.App` = `Low`、explorer = `Medium`。
+
+解决：**从资源管理器双击 `StackIt.App.exe`**（或用普通的 Windows 终端启动），
+不要用沙箱里的终端。2.0.2 起程序自己会查令牌：低完整性时判定托盘不可用，
+点 X 真退出并说明原因，不会再留下一个没窗口、没图标的进程。
+
+### 再启动一次为什么叫不回窗口
+
+窗口收进托盘走的是 `Hide()` —— Win32 层面隐藏。`Process.MainWindowHandle`
+只认「可见的、无主的顶层窗口」，对隐藏窗口返回 **0**。
+
+早先的实现正是拿它找窗口，于是「再启动一次」永远找不到已有窗口，
+只弹一句「程序已在运行」就退出。托盘图标要是恰好也看不到
+（Win11 默认把新图标收进「^」折叠区、Explorer 重启后旧图标丢了、通知区域设成永不显示），
+程序就彻底失联：窗口没有、图标没有、命令还说它在跑 —— 只能去任务管理器杀。
+
+现在改成 `EnumWindows` 按窗口类名（`HwndWrapper[StackIt.App;;{guid}]`）+ 有标题来找，
+隐藏窗口照样找得到。找到之后**发消息让它自己 `Show()`**，而不是外部 `ShowWindow`：
+后者只改 Win32 可见位，WPF 的 `Visibility` 还停在 Hidden，之后点右上角 X 会像没反应。
+消息用 `RegisterWindowMessage` 注册（`StackIt.ShowMainWindow` / `StackIt.QuitApp`），
+不用 `WM_APP + N`，撞号没有保护。
+
+这一步有自检守着：
+
+```powershell
+native\dist\StackIt.App.exe --instance-test
+```
+
+它建窗口 → `Hide()` → 断言按类名仍找得到那个句柄。旧实现死在这一步。
 
 ```powershell
 native\dist\StackIt.App.exe --tray-test
@@ -349,9 +406,23 @@ native\dist\StackIt.App.exe --tray-diag
 ```
 
 依次查：explorer 进程数、本进程会话号、四个通知区域窗口在不在（`Shell_TrayWnd` /
-`NotifyIconToolbarWindowClass` / `TrayNotifyWnd` / 副屏）、实际注册结果、图标颜色数。
-每一层都正常但用户仍看不到，只剩这几种：通知区域被设成「永不显示」、图标收在「^」折叠区、
-程序已经关了、多显示器跑到副屏上了。
+`NotifyIconToolbarWindowClass` / `TrayNotifyWnd` / 副屏）、图标颜色数，最后两行是
+**问 Shell 要的答案**而不是自报：
+
+- `Shell 那侧的图标`：拿 NotifyIcon 真正的 `NOTIFYICONDATA` 标识（窗口句柄 + uID，
+  只能反射私有字段拿到）去调 `Shell_NotifyIconGetRect`。**查询成功 = Shell 真的收下了**。
+- `Windows 是否让它常驻`：读 `HKCU\Control Panel\NotifyIconSettings\<guid>` 里对应本 exe
+  的 `IsPromoted`。**新程序的图标默认 `IsPromoted=0`** —— 注册是成功的，但被收在
+  「^」折叠区里。这是「托盘看不到图标」最常见的原因，比"没注册上"常见得多，
+  而且程序里看不出来（注册 API 不会告诉你）。
+
+想让它常驻，两条路（都不需要重启程序）：
+
+1. 点任务栏右下角的 `^` 展开，把 StackIt 图标拖到任务栏上；
+2. 设置 → 个性化 → 任务栏 → 「其他系统托盘图标」→ 打开 StackIt。
+
+每一层都正常但用户仍看不到，只剩这几种：通知区域被设成「永不显示」、程序已经关了、
+多显示器跑到副屏上了。
 
 注意 `Console.OutputEncoding` 在输出被重定向时会抛 `IOException`（GUI 子系统没有真
 控制台），所以那条要 try 包起来 —— 否则诊断命令自己先崩了。

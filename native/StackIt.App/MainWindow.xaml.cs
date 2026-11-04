@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.IO;
+using System.Runtime.InteropServices;   // 令牌里的完整性级别（托盘能不能用）
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;         // HwndSource.AddHook（接单实例的进程间消息）
 using System.Windows.Media;
 using System.Windows.Media.Effects;   // DropShadowEffect（底部条那枚常驻浮层投影）
 using System.Windows.Media.Imaging;
@@ -117,8 +119,13 @@ public partial class MainWindow : Window
     ///
     /// 托盘注册要经过 Explorer（Shell_NotifyIcon 往它的通知区域塞图标）。
     /// 没有 explorer.exe 的环境（服务、某些沙箱、部分远程会话）里注册会静默失败：
-    /// 不抛异常、不打日志，只是图标永远不出现。所以这里把 Visible
-    /// 设完立刻回读确认，失败就告诉用户，不让人以为程序坏了。
+    /// 不抛异常、不打日志，只是图标永远不出现。而 `NotifyIcon.Visible`
+    /// 只是把刚写进去的值读回来，**它证明不了任何事**。
+    ///
+    /// 现在多查一条硬事实：本进程的完整性级别。低完整性（沙箱 / 受限令牌）
+    /// 下 UIPI 禁止向中等完整性的 explorer 发消息，Shell_NotifyIcon 直接
+    /// 返回 ERROR_ACCESS_DENIED，图标永远不可能出现 —— 这个从程序内部
+    /// 只能靠令牌得知，见 IsLowIntegrity 的说明。
     /// </summary>
     private void SetupTray()
     {
@@ -136,7 +143,9 @@ public partial class MainWindow : Window
         _tray.ContextMenuStrip = menu;
         _tray.Visible = true;
 
-        TrayRegistered = _tray.Visible;
+        // 低完整性下这次注册必然是失败的，别看 _tray.Visible 那个自报值。
+        var lowIntegrity = IsLowIntegrity();
+        TrayRegistered = _tray.Visible && !lowIntegrity;
         TrayIconSize = _trayIcon?.ToBitmap()?.Width ?? 0;
 
         // 双击托盘图标 = 显示窗口（单击不响应：单击容易误触）
@@ -162,14 +171,99 @@ public partial class MainWindow : Window
 
         if (!TrayRegistered)
             TrayError =
-                "托盘图标没能注册成功。通常是因为 explorer.exe（Windows 资源管理器）没在运行，" +
-                "或当前是服务 / 远程会话等没有通知区域的环境。" +
-                "这种情况下点右上角关闭仍会把程序收起来，只是没法从托盘叫回来，" +
-                "得用任务管理器结束 —— 这种情况请告诉我，我改回直接退出。";
+                lowIntegrity
+                    ? "这个进程是低完整性级别（被沙箱 / 受限令牌启动的），Windows 不允许它往托盘里放图标。\n\n" +
+                      "请从资源管理器双击 StackIt.App.exe（或普通的 Windows 终端）启动，不要用沙箱里的终端。"
+                    : "托盘图标没能注册成功。通常是因为 explorer.exe（Windows 资源管理器）没在运行，" +
+                      "或当前是服务 / 远程会话等没有通知区域的环境。";
     }
+
+    /// <summary>
+    /// 本进程是不是低完整性级别（沙箱 / 受限令牌）。
+    ///
+    /// 为什么非得查这个：Windows 的 UIPI 禁止低完整性进程向中等完整性的任务栏
+    /// 发窗口消息，`Shell_NotifyIcon` 直接失败并返回 ERROR_ACCESS_DENIED(5)。
+    /// 而 WinForms 的 `NotifyIcon` 把这个失败吞掉了 —— `Visible` 照样返回 true，
+    /// 图标却永远不出现。实测：低完整性下原生 `Shell_NotifyIcon` 返回 false。
+    ///
+    /// 症状就是「进程活着、托盘里没有图标、关掉窗口再也找不到」的幽灵程序。
+    /// 这种情况必须当成「托盘不可用」处理：不藏窗口，直接退出并说明原因。
+    /// </summary>
+    private static bool IsLowIntegrity()
+    {
+        var rid = IntegrityRid();
+        return rid is int value && value < SECURITY_MANDATORY_MEDIUM_RID;
+    }
+
+    /// <summary>给诊断用的一行完整性说明。</summary>
+    internal static string IntegrityLabel => IntegrityRid() switch
+    {
+        null => "读不到",
+        int rid => rid >= SECURITY_MANDATORY_SYSTEM_RID ? $"System (0x{rid:X})"
+            : rid >= SECURITY_MANDATORY_HIGH_RID ? $"High (0x{rid:X})"
+            : rid >= SECURITY_MANDATORY_MEDIUM_RID ? $"Medium (0x{rid:X})"
+            : $"Low (0x{rid:X}) —— 托盘图标会被 UIPI 挡掉",
+    };
+
+    private static int? IntegrityRid()
+    {
+        IntPtr token = IntPtr.Zero, buffer = IntPtr.Zero;
+        try
+        {
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, out token)) return null;
+            buffer = Marshal.AllocHGlobal(256);
+            if (!GetTokenInformation(token, TokenIntegrityLevel, buffer, 256, out _)) return null;
+
+            // TOKEN_MANDATORY_LABEL { SID_AND_ATTRIBUTES { PSID Sid; DWORD Attributes; } }
+            var sid = Marshal.ReadIntPtr(buffer);
+            var count = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
+            return Marshal.ReadInt32(GetSidSubAuthority(sid, count - 1));
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            if (token != IntPtr.Zero) CloseHandle(token);
+        }
+    }
+
+    private const int TOKEN_QUERY = 0x0008;
+    private const int TokenIntegrityLevel = 25;
+    private const int SECURITY_MANDATORY_MEDIUM_RID = 0x2000;
+    private const int SECURITY_MANDATORY_HIGH_RID = 0x3000;
+    private const int SECURITY_MANDATORY_SYSTEM_RID = 0x4000;
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr process, int access, out IntPtr token);
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(
+        IntPtr token, int infoClass, IntPtr info, int length, out int returnLength);
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll")]
+    private static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll")]
+    private static extern IntPtr GetSidSubAuthority(IntPtr sid, int index);
 
     /// <summary>托盘图标是否真的注册上了。见 SetupTray 的说明。</summary>
     internal static bool TrayRegistered { get; private set; }
+
+    /// <summary>
+    /// 托盘控件本身。只给 `--tray-diag` 用：它要反射出 NotifyIcon 私有的
+    /// NOTIFYICONDATA 标识（窗口句柄 + uID），再去问 Shell「这个图标你收下了吗」。
+    /// 公开 API 里没有这条路，`Visible` 那个属性只是自报。
+    /// </summary>
+    internal System.Windows.Forms.NotifyIcon Tray => _tray;
 
     /// <summary>托盘图标实际取到的像素尺寸。0 表示没取到（会是空白）。</summary>
     internal static int TrayIconSize { get; private set; }
@@ -249,6 +343,38 @@ public partial class MainWindow : Window
         Show();
         WindowState = WindowState.Normal;
         Activate();
+    }
+
+    /// <summary>
+    /// 接单实例的两条进程间消息：再启动一次 exe 时，第二个进程会请求
+    /// 已有实例「把窗口显示出来」，或用 --quit 请求它退出。
+    ///
+    /// 必须是窗口自己来做这两件事，不能由外面的进程代劳：外部 ShowWindow
+    /// 只改 Win32 可见位，WPF 的 Visibility 还停在 Hidden，之后点 X 会像没反应。
+    /// </summary>
+    private IntPtr OnInstanceMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg != SingleInstance.ShowMessage && msg != SingleInstance.QuitMessage)
+            return IntPtr.Zero;
+
+        handled = true;
+        var show = msg == SingleInstance.ShowMessage;
+        // 窗口过程里不能直接 Show() / Shutdown()：那会把可视树拆在消息处理中途。
+        // 排到队列尾再做。
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (show) Restore();
+            else Quit();
+        }), DispatcherPriority.Normal);
+        return IntPtr.Zero;
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        // 窗口句柄一建好就挂上，晚挂会漏掉这期间发来的消息
+        if (PresentationSource.FromVisual(this) is HwndSource src)
+            src.AddHook(OnInstanceMessage);
     }
 
     /// <summary>真退出。菜单点「退出」或托盘图标右键关闭都走这里。</summary>
@@ -471,9 +597,13 @@ public partial class MainWindow : Window
             // 托盘没注册上时不能藏 —— 藏了用户就没法再打开，
             // 只能去任务管理器杀进程，数据还没存就丢了。
             // 这种情况老老实实退出，并说清楚为什么。
+            //
+            // 必须真的走 Quit()：ShutdownMode 已经是 OnExplicitShutdown，
+            // 只是让窗口关掉的话，进程会**留在后台、没有窗口、也没有托盘图标** ——
+            // 正好又变成那个只能靠任务管理器收拾的幽灵程序。
+            // 所以取消这次关闭，交给 Quit 走完整退出（交还单实例锁、关托盘、Shutdown）。
             if (!TrayRegistered)
             {
-                base.OnClosing(e);
                 if (!TrayErrorShown && !SuppressDialogs)
                 {
                     TrayErrorShown = true;
@@ -481,6 +611,8 @@ public partial class MainWindow : Window
                         TrayError + "\n\n这次将直接退出。",
                         "StackIt", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
+                e.Cancel = true;
+                Quit();
                 return;
             }
 

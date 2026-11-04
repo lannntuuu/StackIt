@@ -85,17 +85,43 @@ public partial class App : Application
             // 递归地把唯一能跑的那个也关了。
             if (Shot.TryRun(e.Args)) return;
 
+            // 命令行出口：`--quit` 请求在跑的那个实例退出。
+            // 托盘图标没出来（收在「^」里、Explorer 重启后丢了）时，右键菜单
+            // 点不到，这条命令是唯一不用开任务管理器的退出办法。
+            if (e.Args.Contains("--quit"))
+            {
+                SingleInstance.TryQuitExisting();
+                Shutdown(0);
+                return;
+            }
+
             // 单实例：第二个实例只把已有窗口叫到前台，然后安静退出，
             // 绝不创建第二个 MainWindow——两个窗口会互相覆盖同一份 db.json。
             Single = new SingleInstance();
             if (!Single.IsOwner)
             {
-                // 这里 MainWindow 这个名字会解析成 Application.MainWindow 属性
+                // 已有实例。先让它把窗口显示出来 —— 收进托盘之后窗口是隐藏的，
+                // 这时**不能**靠 Process.MainWindowHandle 找窗口（隐藏窗口返回 0），
+                // 那正是「命令说程序在跑，界面上却什么都看不到」的老毛病。
+                // 对方可能还在启动中（窗口没建好），所以给一小段重试。
+                var restored = false;
+                for (var attempt = 0; attempt < 10 && !restored; attempt++)
+                {
+                    if (attempt > 0) System.Threading.Thread.Sleep(100);
+                    restored = SingleInstance.TryActivateExisting();
+                }
+
+                // 只有真的叫不出来才弹框：能叫出来就直接切过去，别再拦一道。
+                // MainWindow 这个名字在这里会解析成 Application.MainWindow 属性
                 // （类型是 Window），要拿到静态成员必须写全类型名。
-                if (!StackIt.App.MainWindow.SuppressDialogs)
-                    MessageBox.Show("程序已在运行。", "StackIt",
-                        MessageBoxButton.OK, MessageBoxImage.Information);
-                SingleInstance.TryActivateExisting();
+                if (!restored && !StackIt.App.MainWindow.SuppressDialogs)
+                    MessageBox.Show(
+                        "程序已在运行，但没能把它的窗口叫出来。\n\n" +
+                        "它可能正卡在启动中，或已经无响应。可以运行\n" +
+                        "    StackIt.App.exe --quit\n" +
+                        "让它退出，再重新打开；也可以直接用任务管理器结束 StackIt.App.exe。",
+                        "StackIt", MessageBoxButton.OK, MessageBoxImage.Warning);
+
                 Shutdown(0);
                 return;
             }
