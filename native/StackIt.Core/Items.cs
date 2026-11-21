@@ -35,6 +35,9 @@ public static class Items
         new Item { Id = "ps", Name = "PS", Aliases = new List<string> { "ps", "PS" }, Route = "oral", Group = "其他", Unit = "片" },
         new Item { Id = "minoxidil", Name = "米诺地尔", Aliases = new List<string> { "米诺地尔" }, Route = "topical", Group = "外用", Unit = "次" },
         new Item { Id = "selenium", Name = "二硫化硒", Aliases = new List<string> { "二硫化硒" }, Route = "topical", Group = "外用", Unit = "次" },
+        // 辅酶Q10：心脏/能量代谢类补充剂，不属维生素/矿物质/脂肪酸，归入「其他」。
+        // 别名区分大小写全词匹配；Q10 / CoQ10 是记录里的常见写法。
+        new Item { Id = "coq10", Name = "辅酶Q10", Aliases = new List<string> { "辅酶Q10", "Q10", "CoQ10" }, Route = "oral", Group = "其他", Unit = "粒" },
     };
 
     private static readonly Dictionary<string, Item> ById =
