@@ -31,13 +31,18 @@ public sealed class ParseResult
 /// </summary>
 public static class Importer
 {
-    /// <summary>标头 off-by-one 笔误：按原文行号精确限定，不能用日期做键。</summary>
-    private static readonly Dictionary<int, int> OffByOneFix = new()
-    {
-        [1747] = 16, // 06-15 -> 06-16
-        [1776] = 9,  // 06-08 -> 06-09
-        [1805] = 2,  // 06-01 -> 06-02
-    };
+    /// <summary>
+    /// 标头 off-by-one 笔误修正。
+    ///
+    /// 历史教训：早期按**行号**硬编码（1747/1776/1805），源数据一增长行号就漂移，
+    /// 结果把本来正确的周表（如今的 1805 行 = 07-21，本就是周一）改成了 07-02，
+    /// 反而破坏了周一约束。行号不是稳定的键，日期语义才是。
+    ///
+    /// 现在改用通用规则：周表起始日按语义必须是周一；若某起始日不是周一，
+    /// 但 +1 天后恰好是周一，则判为原文 off-by-one 笔误并 +1 天修正。
+    /// 这样无论文件头部增删多少行、真实笔误会落在哪一行，都能自动且唯一地捕获
+    /// （当前数据命中 1950/1979/2008 三处，与设计文档记录的笔误是同一段）。
+    /// </summary>
 
     private const int StartYear = 2023;
 
@@ -138,11 +143,14 @@ public static class Importer
             prevMonth = h.Sm;
 
             var day = h.Sd;
-            if (OffByOneFix.TryGetValue(h.Line, out var fixedDay))
+            var rawStart = $"{year}-{h.Sm:00}-{day:00}";
+            // 起始日必须是周一；不是周一但 +1 天恰好是周一 → 原文 off-by-one 笔误。
+            // 用日期语义而非行号判断，源数据行号漂移也不会误伤正确的周表。
+            if (DateOf(rawStart).DayOfWeek != DayOfWeek.Monday &&
+                DateOf(rawStart).AddDays(1).DayOfWeek == DayOfWeek.Monday)
             {
-                var before = $"{year}-{h.Sm:00}-{h.Sd:00}";
-                day = fixedDay;
-                corrections.Add((h.Line, before, $"{year}-{h.Sm:00}-{day:00}"));
+                day += 1;
+                corrections.Add((h.Line, rawStart, $"{year}-{h.Sm:00}-{day:00}"));
             }
 
             var start = $"{year}-{h.Sm:00}-{day:00}";

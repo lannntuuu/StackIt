@@ -28,6 +28,16 @@ if (args.Length == 1 && args[0] == "migration-test")
     return 0;
 }
 
+if (args.Length >= 1 && args[0] == "baseline-gen")
+{
+    if (args.Length < 3)
+    {
+        Console.Error.WriteLine("用法: dotnet run -- baseline-gen <记录.md> <输出目录>");
+        return 2;
+    }
+    return BaselineGen.Run(args[1], args[2]);
+}
+
 if (args.Length >= 1 && args[0] == "verify-items")
 {
     var source = args.Length > 1 ? args[1] : ItemStore.ItemsPath;
