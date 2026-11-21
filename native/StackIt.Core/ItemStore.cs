@@ -21,9 +21,31 @@ public static class ItemStore
 
     public static List<Item> Load() => Load(ItemsPath);
 
+    /// <summary>
+    /// 首次运行时把内置品类字典落盘成 items.json。
+    ///
+    /// 历史问题：items.json 只在开发目录 .dch/data 里生成过，从未写进真实数据目录
+    /// （%APPDATA%\StackIt），导致品类管理页读到空列表、看不到任何老品类。
+    /// 解析器/统计虽有 Items.All 回退所以数据不受影响，但管理界面是空的。
+    /// 这里在文件缺失时自动播种，保证用户第一次打开就有 17 个内置品类可管理。
+    /// 深拷贝避免与全局 Items.All 共享可变的别名/窗口列表。
+    /// </summary>
+    public static List<Item> EnsureSeeded()
+    {
+        if (File.Exists(ItemsPath)) return Load(ItemsPath);
+        var seed = Items.All
+            .Select(i => JsonSerializer.Deserialize<Item>(JsonSerializer.Serialize(i, Opts), Opts)!)
+            .ToList();
+        try { Save(seed); }
+        catch { /* 写盘失败不阻断：退回内存默认，下次启动再试 */ }
+        return seed;
+    }
+
     public static List<Item> Load(string path)
     {
-        if (!File.Exists(path)) return new List<Item>();
+        // 仅默认路径缺失时自动播种；显式传入的自定义路径（如自检的临时文件）保持原语义。
+        if (!File.Exists(path))
+            return path == ItemsPath ? EnsureSeeded() : new List<Item>();
         var json = File.ReadAllText(path, Encoding.UTF8);
         var items = JsonSerializer.Deserialize<List<Item>>(json, Opts)
             ?? throw new InvalidDataException("品类配置必须是 JSON 数组");
