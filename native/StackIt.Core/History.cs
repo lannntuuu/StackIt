@@ -60,6 +60,9 @@ public static class HistoryCalc
     /// </summary>
     public static History Build(Db db)
     {
+        var configured = ItemStore.Load();
+        var items = configured.Count > 0 ? configured : Items.All.ToList();
+        var byId = items.ToDictionary(i => i.Id, StringComparer.Ordinal);
         var evs = db.Events;
         if (evs.Count == 0) return new History();
 
@@ -98,7 +101,7 @@ public static class HistoryCalc
         {
             var from = index[MondayOf(r.Min)];
             var to = index[MondayOf(r.Max)];
-            var def = Items.Get(itemId);
+            byId.TryGetValue(itemId, out var def);
 
             var activeWeeks = 0;
             for (var i = from; i <= to; i++)
@@ -187,7 +190,11 @@ public static class HistoryCalc
     {
         var h = Build(db);
         if (h.Rows.Count == 0)
-            return Items.All.Where(i => i.Route == "oral").Select(i => i.Id).Take(limit).ToList();
+        {
+            var configured = ItemStore.Load();
+            var items = configured.Count > 0 ? configured : Items.All.ToList();
+            return items.Where(i => i.Route == "oral").Select(i => i.Id).Take(limit).ToList();
+        }
 
         var lastWeek = h.Weeks.Count - 1;
         var scored = h.Rows

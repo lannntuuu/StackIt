@@ -1,4 +1,4 @@
-﻿# dotnet
+# dotnet
 .dch/
 bin/
 obj/
@@ -21,6 +21,7 @@ native/StackIt.App/icon-*.png
 native/StackIt-CodeSign.cer
 # dotnet CLI 的 HOME 重定向产物（某些构建会生成），不是项目内容
 .dotnet-home/
+.dotnet-cli/
 
 # ── 个人记录数据：不入库 ──────────────────────────────────────────
 # 这些文件本身就是「谁在什么时候吃了什么」的完整记录，或它的等价形式，

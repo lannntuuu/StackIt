@@ -60,6 +60,9 @@ public static class Stats
 
     public static StatsResult Compute(Db db)
     {
+        var configured = ItemStore.Load();
+        var definitions = configured.Count > 0 ? configured : Items.All.ToList();
+        var byId = definitions.ToDictionary(i => i.Id, StringComparer.Ordinal);
         var evs = db.Events;
         var r = new StatsResult
         {
@@ -86,7 +89,7 @@ public static class Stats
         var items = new List<ItemStat>();
         foreach (var group in evs.GroupBy(e => e.ItemId))
         {
-            var def = Items.Get(group.Key);
+            byId.TryGetValue(group.Key, out var def);
             var ds = group.Select(e => e.When.Date).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
             var slots = new Dictionary<string, int> { ["早"] = 0, ["中"] = 0, ["晚"] = 0 };
             foreach (var e in group)
@@ -137,7 +140,9 @@ public static class Stats
     /// </summary>
     public static List<string> RecentItems(Db db, int withinDays = 14, string? slot = null, int limit = 8)
     {
-        var orals = Items.All.Where(i => i.Route == "oral").Select(i => i.Id).ToList();
+        var configured = ItemStore.Load();
+        var items = configured.Count > 0 ? configured : Items.All.ToList();
+        var orals = items.Where(i => i.Route == "oral").Select(i => i.Id).ToList();
 
         if (db.Events.Count == 0)
             return orals.Take(limit).ToList();

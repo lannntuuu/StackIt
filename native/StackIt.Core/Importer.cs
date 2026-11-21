@@ -61,20 +61,10 @@ public static class Importer
     private static readonly Regex PeelGluedRe =
         new(@"^(.+?)(\d+)$", RegexOptions.Compiled);
 
-    /// <summary>
-    /// 列头 → 品类。
-    /// 关键：很多单元格只有时间没有品名（如锌列写 `15.57`、米诺地尔列写 `23.00`），
-    /// 此时品类由**列头**决定。缺了这步会漏掉大量事件。
-    /// </summary>
-    private static readonly Dictionary<string, string> ColItem = new()
+    /// <summary>历史表头中未列入别名的兼容写法。</summary>
+    private static readonly Dictionary<string, string> HeaderAliases = new()
     {
-        ["维生素C"] = "vitC",
-        ["维C"] = "vitC",
-        ["维生素B复合"] = "bComplex",
-        ["B复合"] = "bComplex",
-        ["锌"] = "zinc",
-        ["米诺地尔"] = "minoxidil",
-        ["二硫化硒"] = "selenium",
+        ["维生素B复合"] = "复合维生素B",
     };
 
     private static readonly string[] Weekdays =
@@ -86,6 +76,40 @@ public static class Importer
 
     public static ParseResult ParseMarkdown(string md)
     {
+        // 每次导入都加载当前配置；未配置时沿用内置默认字典，保证旧数据可导入。
+        var configured = ItemStore.Load();
+        var items = configured.Count > 0 ? configured : Items.All.ToList();
+        var lookup = items
+            .SelectMany(item => item.Aliases
+                .Append(item.Name)
+                .Select(alias => (Alias: alias.Trim(), Item: item)))
+            .OrderByDescending(x => x.Alias.Length)
+            .ToArray();
+        var colItems = lookup
+            .GroupBy(x => x.Alias, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().Item.Id, StringComparer.Ordinal);
+        foreach (var (header, name) in HeaderAliases)
+        {
+            var item = items.FirstOrDefault(i => i.Name == name);
+            if (item is not null) colItems[header] = item.Id;
+        }
+
+        Item? Match(string token)
+        {
+            var t = token.Trim();
+            foreach (var (alias, item) in lookup)
+                if (t == alias) return item;
+            return null;
+        }
+
+        (string Name, int Dose)? PeelGlued(string tok)
+        {
+            var m = PeelGluedRe.Match(tok);
+            if (!m.Success) return null;
+            var name = m.Groups[1].Value;
+            return Match(name) is null ? null : (name, int.Parse(m.Groups[2].Value));
+        }
+
         // 按 \r?\n 切分，保留行号语义（1-based）
         var lines = md.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
 
@@ -179,11 +203,11 @@ public static class Importer
                 if (string.IsNullOrEmpty(cell)) continue;
 
                 var colName = ci < rawCols.Length ? rawCols[ci].Trim() : "";
-                ColItem.TryGetValue(colName, out var fallbackItemId);
+                colItems.TryGetValue(colName, out var fallbackItemId);
 
                 foreach (var seg in SplitSegments(cell))
                 {
-                    var parsed = ParseSegment(seg.Body, unknown, fallbackItemId);
+                    var parsed = ParseSegment(seg.Body, unknown, fallbackItemId, Match, PeelGlued);
                     if (parsed.Count == 0)
                     {
                         // 段内既无品名也无剂量，但有时间 → 整格就是列头品类的一个事件
@@ -286,16 +310,6 @@ public static class Importer
         return $"{h:00}:{m:00}";
     }
 
-    /// <summary>品名与剂量粘连：复合2 → (复合维生素B, 2)；鱼油1 → (鱼油, 1)</summary>
-    private static (string Name, int Dose)? PeelGlued(string tok)
-    {
-        var m = PeelGluedRe.Match(tok);
-        if (!m.Success) return null;
-        var name = m.Groups[1].Value;
-        if (Items.Match(name) is null) return null;
-        return (name, int.Parse(m.Groups[2].Value));
-    }
-
     /// <summary>
     /// 段内品名+剂量匹配。
     /// 处理三种写法：`B2 2`（品名在前）、`复合 B2 2`（品名在前无剂量）、`复合2`（粘连）。
@@ -304,7 +318,9 @@ public static class Importer
     private static List<(string ItemId, int? Dose)> ParseSegment(
         string body,
         Dictionary<string, int> unknown,
-        string? fallbackItemId)
+        string? fallbackItemId,
+        Func<string, Item?> match,
+        Func<string, (string Name, int Dose)?> peelGlued)
     {
         var outp = new List<(string, int?)>();
         string? pending = null;
@@ -321,10 +337,10 @@ public static class Importer
 
             // 先尝试粘连（复合2 / 鱼油1）：必须早于 Match，
             // 否则 `复合2` 会被 aliases 里的 '复合2' 整体命中，导致剂量丢失
-            var pg = PeelGlued(t);
+            var pg = peelGlued(t);
             if (pg is not null)
             {
-                var it = Items.Match(pg.Value.Name);
+                var it = match(pg.Value.Name);
                 if (it is not null)
                 {
                     outp.Add((it.Id, pg.Value.Dose));
@@ -333,7 +349,7 @@ public static class Importer
                 }
             }
 
-            var item = Items.Match(t);
+            var item = match(t);
             if (item is not null)
             {
                 if (pending is not null) outp.Add((pending, null));

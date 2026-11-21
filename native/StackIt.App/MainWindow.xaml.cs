@@ -16,7 +16,7 @@ using StackIt.Core;
 namespace StackIt.App;
 
 /// <summary>
-/// 主窗口。持有数据与当前页签，三个页面都是纯 UI，各自拿 Db 去画。
+/// 主窗口。持有数据与当前页签，页面各自拿 Db 去画。
 /// 数据改动一律走 Core.Store，改完立即 Refresh，界面跟着重画。
 /// </summary>
 public partial class MainWindow : Window
@@ -442,6 +442,7 @@ public partial class MainWindow : Window
             {
                 "stats" => new StatsView(this),
                 "timeline" => new TimelineView(this),
+                "items" => new ItemsView(this),
                 _ => new DataView(this),
             };
         }
@@ -543,6 +544,7 @@ public partial class MainWindow : Window
         Mark(TabStats, TabStatsInd, "stats", tab);
         Mark(TabTimeline, TabTimelineInd, "timeline", tab);
         Mark(TabData, TabDataInd, "data", tab);
+        Mark(TabItems, TabItemsInd, "items", tab);
     }
 
     private static void Mark(Button b, FrameworkElement ind, string key, string current)

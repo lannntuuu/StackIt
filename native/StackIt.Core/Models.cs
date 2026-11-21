@@ -11,6 +11,8 @@ public sealed class Db
     [JsonPropertyName("version")] public int Version { get; set; } = 1;
     [JsonPropertyName("events")] public List<IntakeEvent> Events { get; set; } = new();
     [JsonPropertyName("observations")] public List<Observation> Observations { get; set; } = new();
+    /// <summary>旧版导出没有此字段；导入时由 Migration 补齐。</summary>
+    [JsonPropertyName("items")] public List<Item>? Items { get; set; }
 }
 
 public sealed class When

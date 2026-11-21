@@ -1,16 +1,5 @@
 namespace StackIt.Core;
 
-/// <summary>口服 | 外用</summary>
-public sealed class Item
-{
-    public required string Id { get; init; }
-    public required string Name { get; init; }
-    public required string[] Aliases { get; init; }
-    public required string Route { get; init; }
-    public required string Group { get; init; }
-    public required string Unit { get; init; }
-}
-
 /// <summary>
 /// 品类清单 —— 来自 记录.md 实测的 token 闭集。
 /// 逐条对照 src/lib/items.ts 移植，改动前先确认两边一致。
@@ -24,28 +13,28 @@ public static class Items
 {
     public static readonly Item[] All =
     {
-        new Item { Id = "vitC", Name = "维生素C", Aliases = new[] { "VC", "vitC", "维C" }, Route = "oral", Group = "维C", Unit = "片" },
-        new Item { Id = "b1", Name = "维生素B1", Aliases = new[] { "B1", "b1" }, Route = "oral", Group = "B族", Unit = "片" },
-        new Item { Id = "b2", Name = "维生素B2", Aliases = new[] { "B2", "b2" }, Route = "oral", Group = "B族", Unit = "片" },
-        new Item { Id = "b6", Name = "维生素B6", Aliases = new[] { "B6", "b6" }, Route = "oral", Group = "B族", Unit = "片" },
+        new Item { Id = "vitC", Name = "维生素C", Aliases = new List<string> { "VC", "vitC", "维C" }, Route = "oral", Group = "维C", Unit = "片" },
+        new Item { Id = "b1", Name = "维生素B1", Aliases = new List<string> { "B1", "b1" }, Route = "oral", Group = "B族", Unit = "片" },
+        new Item { Id = "b2", Name = "维生素B2", Aliases = new List<string> { "B2", "b2" }, Route = "oral", Group = "B族", Unit = "片" },
+        new Item { Id = "b6", Name = "维生素B6", Aliases = new List<string> { "B6", "b6" }, Route = "oral", Group = "B族", Unit = "片" },
         new Item
         {
             Id = "bComplex", Name = "复合维生素B",
-            Aliases = new[] { "复合2", "复合", "复合维生素B", "B复合", "bComplex" },
+            Aliases = new List<string> { "复合2", "复合", "复合维生素B", "B复合", "bComplex" },
             Route = "oral", Group = "B族", Unit = "片"
         },
-        new Item { Id = "vitD3", Name = "维生素D3", Aliases = new[] { "D3", "d3", "维生素D3" }, Route = "oral", Group = "脂溶性", Unit = "片" },
-        new Item { Id = "vitE", Name = "维生素E", Aliases = new[] { "E" }, Route = "oral", Group = "脂溶性", Unit = "片" },
-        new Item { Id = "vitA", Name = "维生素A", Aliases = new[] { "A" }, Route = "oral", Group = "脂溶性", Unit = "片" },
-        new Item { Id = "zinc", Name = "锌", Aliases = new[] { "锌" }, Route = "oral", Group = "矿物质", Unit = "片" },
-        new Item { Id = "calciumComplex", Name = "复合钙", Aliases = new[] { "复合钙", "钙" }, Route = "oral", Group = "矿物质", Unit = "片" },
-        new Item { Id = "calciumD3K2", Name = "钙D3K2", Aliases = new[] { "钙d3k2", "钙D3K2" }, Route = "oral", Group = "矿物质", Unit = "片" },
-        new Item { Id = "magnesium", Name = "镁", Aliases = new[] { "镁" }, Route = "oral", Group = "矿物质", Unit = "片" },
-        new Item { Id = "fishOil", Name = "鱼油", Aliases = new[] { "鱼油", "鱼油1" }, Route = "oral", Group = "脂肪酸", Unit = "粒" },
-        new Item { Id = "multivitamin", Name = "复合维生素", Aliases = new[] { "复合维生素", "复合维生素2" }, Route = "oral", Group = "其他", Unit = "片" },
-        new Item { Id = "ps", Name = "PS", Aliases = new[] { "ps", "PS" }, Route = "oral", Group = "其他", Unit = "片" },
-        new Item { Id = "minoxidil", Name = "米诺地尔", Aliases = new[] { "米诺地尔" }, Route = "topical", Group = "外用", Unit = "次" },
-        new Item { Id = "selenium", Name = "二硫化硒", Aliases = new[] { "二硫化硒" }, Route = "topical", Group = "外用", Unit = "次" },
+        new Item { Id = "vitD3", Name = "维生素D3", Aliases = new List<string> { "D3", "d3", "维生素D3" }, Route = "oral", Group = "脂溶性", Unit = "片" },
+        new Item { Id = "vitE", Name = "维生素E", Aliases = new List<string> { "E" }, Route = "oral", Group = "脂溶性", Unit = "片" },
+        new Item { Id = "vitA", Name = "维生素A", Aliases = new List<string> { "A" }, Route = "oral", Group = "脂溶性", Unit = "片" },
+        new Item { Id = "zinc", Name = "锌", Aliases = new List<string> { "锌" }, Route = "oral", Group = "矿物质", Unit = "片" },
+        new Item { Id = "calciumComplex", Name = "复合钙", Aliases = new List<string> { "复合钙", "钙" }, Route = "oral", Group = "矿物质", Unit = "片" },
+        new Item { Id = "calciumD3K2", Name = "钙D3K2", Aliases = new List<string> { "钙d3k2", "钙D3K2" }, Route = "oral", Group = "矿物质", Unit = "片" },
+        new Item { Id = "magnesium", Name = "镁", Aliases = new List<string> { "镁" }, Route = "oral", Group = "矿物质", Unit = "片" },
+        new Item { Id = "fishOil", Name = "鱼油", Aliases = new List<string> { "鱼油", "鱼油1" }, Route = "oral", Group = "脂肪酸", Unit = "粒" },
+        new Item { Id = "multivitamin", Name = "复合维生素", Aliases = new List<string> { "复合维生素", "复合维生素2" }, Route = "oral", Group = "其他", Unit = "片" },
+        new Item { Id = "ps", Name = "PS", Aliases = new List<string> { "ps", "PS" }, Route = "oral", Group = "其他", Unit = "片" },
+        new Item { Id = "minoxidil", Name = "米诺地尔", Aliases = new List<string> { "米诺地尔" }, Route = "topical", Group = "外用", Unit = "次" },
+        new Item { Id = "selenium", Name = "二硫化硒", Aliases = new List<string> { "二硫化硒" }, Route = "topical", Group = "外用", Unit = "次" },
     };
 
     private static readonly Dictionary<string, Item> ById =

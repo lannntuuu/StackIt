@@ -1228,10 +1228,12 @@ public sealed class DataView : ScrollViewer
         _dangerConfirm.Visibility = Visibility.Collapsed;
         try
         {
-            var db = Store.FromJson(File.ReadAllText(path, System.Text.Encoding.UTF8));
+            var db = Store.FromJson(File.ReadAllText(path, System.Text.Encoding.UTF8), out var migrated);
             _host.ReplaceDb(db);
             _host.Refresh();
-            Say($"已恢复 {db.Events.Count} 条记录。", false);
+            Say(migrated
+                ? $"已恢复 {db.Events.Count} 条记录。{Migration.Notice}"
+                : $"已恢复 {db.Events.Count} 条记录。", false);
         }
         catch (Exception ex)
         {

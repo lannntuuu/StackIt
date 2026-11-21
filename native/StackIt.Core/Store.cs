@@ -465,14 +465,21 @@ public sealed class Store
 
     /* ---------- 导入导出 ---------- */
 
-    public static string ToJson(Db db) => JsonSerializer.Serialize(db, Opts);
+    public static string ToJson(Db db)
+    {
+        Migration.CompleteCategories(db);
+        return JsonSerializer.Serialize(db, Opts);
+    }
 
-    public static Db FromJson(string text)
+    public static Db FromJson(string text) => FromJson(text, out _);
+
+    public static Db FromJson(string text, out bool migrated)
     {
         var db = JsonSerializer.Deserialize<Db>(text, Opts);
         if (db is null) throw new InvalidDataException("不是有效的 StackIt 数据");
         db.Events ??= new List<IntakeEvent>();
         db.Observations ??= new List<Observation>();
+        migrated = Migration.CompleteCategories(db);
         return db;
     }
 

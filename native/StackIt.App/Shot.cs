@@ -1444,6 +1444,7 @@ internal static class Shot
         {
             case "timeline": win.GoTo("timeline"); break;
             case "data": win.GoTo("data"); break;
+            case "items": win.GoTo("items"); break;
             default: win.GoTo("stats"); break;
         }
     }

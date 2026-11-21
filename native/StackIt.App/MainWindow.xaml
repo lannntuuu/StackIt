@@ -86,7 +86,7 @@
                 <Border Grid.Row="1"
                         BorderBrush="{DynamicResource LineSoft}"
                         BorderThickness="0,1,0,0">
-                    <UniformGrid Rows="1" Columns="3">
+                    <UniformGrid Rows="1" Columns="4">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
@@ -132,6 +132,24 @@
                                     Style="{DynamicResource StackItTab}"
                                     Click="OnTabClick" Tag="data" Content="数据"/>
                             <Border x:Name="TabDataInd" Grid.Row="1"
+                                    Width="20" Height="2" CornerRadius="1"
+                                    HorizontalAlignment="Center"
+                                    Background="{DynamicResource Accent}">
+                                <Border.RenderTransform>
+                                    <ScaleTransform ScaleX="0"/>
+                                </Border.RenderTransform>
+                            </Border>
+                        </Grid>
+
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Button x:Name="TabItems" Grid.Row="0"
+                                    Style="{DynamicResource StackItTab}"
+                                    Click="OnTabClick" Tag="items" Content="品类"/>
+                            <Border x:Name="TabItemsInd" Grid.Row="1"
                                     Width="20" Height="2" CornerRadius="1"
                                     HorizontalAlignment="Center"
                                     Background="{DynamicResource Accent}">
